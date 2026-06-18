@@ -116,7 +116,7 @@ const renderFormattedText = (text: string) => {
         elements.push(<div key={`space-${index}`} className="h-2" />);
       } else {
         elements.push(
-          <p key={`p-${index}`} className="text-zinc-100 leading-relaxed light-theme:text-zinc-850">
+          <p key={`p-${index}`} className="text-zinc-100 leading-relaxed light-theme:text-zinc-800">
             {parseBoldText(line)}
           </p>
         );
@@ -390,7 +390,7 @@ export default function ChatPage() {
                 <div className="space-y-2">
                   <div className={`p-4 rounded-2xl text-sm leading-relaxed ${
                     isMentor
-                      ? 'bg-zinc-950 text-zinc-100 border border-zinc-900 light-theme:bg-zinc-100 light-theme:text-zinc-800 light-theme:border-zinc-205'
+                      ? 'bg-zinc-950 text-zinc-100 border border-zinc-900 light-theme:bg-zinc-100 light-theme:text-zinc-800 light-theme:border-zinc-200'
                       : 'bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10'
                   }`}>
                     {renderFormattedText(msg.text)}
@@ -508,7 +508,7 @@ export default function ChatPage() {
                   </span>
                 </div>
                 
-                <h4 className="text-xs font-bold text-white leading-tight light-theme:text-zinc-850">
+                <h4 className="text-xs font-bold text-white leading-tight light-theme:text-zinc-800">
                   {cit.title}
                 </h4>
                 

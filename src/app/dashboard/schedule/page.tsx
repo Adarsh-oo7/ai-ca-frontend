@@ -174,7 +174,7 @@ export default function SchedulePage() {
         <div className="lg:col-span-8 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-6 light-theme:bg-white light-theme:border-zinc-200">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-4">
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider light-theme:text-zinc-850">Scheduled Tasks</h3>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider light-theme:text-zinc-800">Scheduled Tasks</h3>
               <div className="flex items-center gap-1.5 text-zinc-500 text-xs font-semibold">
                 <Clock className="h-4 w-4" />
                 <span>{completedHours.toFixed(1)} / {plannedHours.toFixed(1)} Hours Studied</span>
@@ -264,7 +264,7 @@ export default function SchedulePage() {
           <div className="lg:col-span-4 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 h-fit space-y-6 light-theme:bg-white light-theme:border-zinc-200">
             <div className="flex items-center gap-2">
               <PlusCircle className="h-5 w-5 text-indigo-400" />
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider font-sans light-theme:text-zinc-850">Add Custom Task</h3>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider font-sans light-theme:text-zinc-800">Add Custom Task</h3>
             </div>
 
             <form onSubmit={handleCreateTask} className="space-y-4">

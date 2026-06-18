@@ -118,7 +118,7 @@ const renderFormattedText = (text: string) => {
         elements.push(<div key={`space-${index}`} className="h-2" />);
       } else {
         elements.push(
-          <p key={`p-${index}`} className="text-zinc-100 leading-relaxed light-theme:text-zinc-850">
+          <p key={`p-${index}`} className="text-zinc-100 leading-relaxed light-theme:text-zinc-800">
             {parseBoldText(line)}
           </p>
         );
