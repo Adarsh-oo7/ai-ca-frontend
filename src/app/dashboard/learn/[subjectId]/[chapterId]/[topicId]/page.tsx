@@ -25,6 +25,106 @@ interface TeachMessage {
   citations?: any[];
 }
 
+// Custom markdown formatter for structured response display
+const renderFormattedText = (text: string) => {
+  if (!text) return null;
+
+  const lines = text.split('\n');
+  const elements: React.ReactNode[] = [];
+  let currentList: React.ReactNode[] = [];
+  let isNumberedList = false;
+
+  const flushList = (key: string) => {
+    if (currentList.length > 0) {
+      if (isNumberedList) {
+        elements.push(
+          <ol key={key} className="list-decimal pl-5 my-2 space-y-1">
+            {currentList}
+          </ol>
+        );
+      } else {
+        elements.push(
+          <ul key={key} className="list-disc pl-5 my-2 space-y-1">
+            {currentList}
+          </ul>
+        );
+      }
+      currentList = [];
+    }
+  };
+
+  const parseBoldText = (lineText: string) => {
+    const boldRegex = /\*\*(.*?)\*\*/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+
+    while ((match = boldRegex.exec(lineText)) !== null) {
+      const index = match.index;
+      if (index > lastIndex) {
+        parts.push(lineText.substring(lastIndex, index));
+      }
+      parts.push(
+        <strong key={index} className="font-extrabold text-indigo-400">
+          {match[1]}
+        </strong>
+      );
+      lastIndex = boldRegex.lastIndex;
+    }
+
+    if (lastIndex < lineText.length) {
+      parts.push(lineText.substring(lastIndex));
+    }
+
+    return parts.length > 0 ? parts : lineText;
+  };
+
+  lines.forEach((line, index) => {
+    const trimmed = line.trim();
+    
+    // Match numbered list: e.g. "1. Item"
+    const numListMatch = /^\d+\.\s+(.*)$/.exec(trimmed);
+    // Match bullet list: e.g. "* Item" or "- Item"
+    const bulletListMatch = /^[\*\-]\s+(.*)$/.exec(trimmed);
+
+    if (numListMatch) {
+      if (!isNumberedList) {
+        flushList(`list-prev-${index}`);
+        isNumberedList = true;
+      }
+      currentList.push(
+        <li key={`li-${index}`} className="text-zinc-200 ml-1">
+          {parseBoldText(numListMatch[1])}
+        </li>
+      );
+    } else if (bulletListMatch) {
+      if (isNumberedList) {
+        flushList(`list-prev-${index}`);
+        isNumberedList = false;
+      }
+      currentList.push(
+        <li key={`li-${index}`} className="text-zinc-200 ml-1">
+          {parseBoldText(bulletListMatch[1])}
+        </li>
+      );
+    } else {
+      flushList(`list-prev-${index}`);
+      if (trimmed === '') {
+        elements.push(<div key={`space-${index}`} className="h-2" />);
+      } else {
+        elements.push(
+          <p key={`p-${index}`} className="text-zinc-100 leading-relaxed">
+            {parseBoldText(line)}
+          </p>
+        );
+      }
+    }
+  });
+
+  flushList(`list-final`);
+  return <div className="space-y-1.5">{elements}</div>;
+};
+
 export default function AITeacherPage() {
   const params = useParams();
   const router = useRouter();
@@ -216,7 +316,7 @@ export default function AITeacherPage() {
                       ? 'bg-zinc-950 text-zinc-100 border border-zinc-900'
                       : 'bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10'
                   }`}>
-                    {msg.text}
+                    {renderFormattedText(msg.text)}
                   </div>
                   <span className={`block text-[10px] text-zinc-600 ${isMentor ? '' : 'text-right'}`}>
                     {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
