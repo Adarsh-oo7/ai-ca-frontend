@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { AIService } from '@/services/ai.service';
 import { CurriculumService } from '@/services/curriculum.service';
+import { AuthService } from '@/services/auth.service';
 
 interface Message {
   id: string;
@@ -67,7 +68,7 @@ const renderFormattedText = (text: string) => {
         parts.push(lineText.substring(lastIndex, index));
       }
       parts.push(
-        <strong key={index} className="font-extrabold text-indigo-400">
+        <strong key={index} className="font-extrabold text-indigo-400 light-theme:text-indigo-600">
           {match[1]}
         </strong>
       );
@@ -95,7 +96,7 @@ const renderFormattedText = (text: string) => {
         isNumberedList = true;
       }
       currentList.push(
-        <li key={`li-${index}`} className="text-zinc-200 ml-1">
+        <li key={`li-${index}`} className="text-zinc-200 ml-1 light-theme:text-zinc-800">
           {parseBoldText(numListMatch[1])}
         </li>
       );
@@ -105,7 +106,7 @@ const renderFormattedText = (text: string) => {
         isNumberedList = false;
       }
       currentList.push(
-        <li key={`li-${index}`} className="text-zinc-200 ml-1">
+        <li key={`li-${index}`} className="text-zinc-200 ml-1 light-theme:text-zinc-800">
           {parseBoldText(bulletListMatch[1])}
         </li>
       );
@@ -115,7 +116,7 @@ const renderFormattedText = (text: string) => {
         elements.push(<div key={`space-${index}`} className="h-2" />);
       } else {
         elements.push(
-          <p key={`p-${index}`} className="text-zinc-100 leading-relaxed">
+          <p key={`p-${index}`} className="text-zinc-100 leading-relaxed light-theme:text-zinc-850">
             {parseBoldText(line)}
           </p>
         );
@@ -142,6 +143,7 @@ export default function ChatPage() {
   
   const [sending, setSending] = React.useState(false);
   const [activeCitations, setActiveCitations] = React.useState<any[]>([]);
+  const [userLanguage, setUserLanguage] = React.useState<string>('en');
   
   // Voice states
   const [isRecording, setIsRecording] = React.useState(false);
@@ -170,6 +172,16 @@ export default function ChatPage() {
     }
     loadSubjects();
 
+    async function loadProfile() {
+      try {
+        const profileData = await AuthService.getProfile();
+        setUserLanguage(profileData.preferred_language || 'en');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    loadProfile();
+
     // Initialize Speech Recognition
     if (typeof window !== 'undefined') {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -177,7 +189,7 @@ export default function ChatPage() {
         const recognition = new SpeechRecognition();
         recognition.continuous = false;
         recognition.interimResults = false;
-        recognition.lang = 'en-IN'; // Optimized for Indian English accent
+        recognition.lang = 'en-IN'; // Default
 
         recognition.onstart = () => setIsRecording(true);
         recognition.onend = () => setIsRecording(false);
@@ -199,6 +211,12 @@ export default function ChatPage() {
     if (isRecording) {
       recognitionRef.current.stop();
     } else {
+      // Set language dynamically based on user profile settings
+      if (userLanguage === 'ml' || userLanguage === 'manglish') {
+        recognitionRef.current.lang = 'ml-IN';
+      } else {
+        recognitionRef.current.lang = 'en-IN';
+      }
       recognitionRef.current.start();
     }
   };
@@ -213,6 +231,22 @@ export default function ChatPage() {
     const cleanText = text.replace(/\[Source \d+\]/g, '').replace(/[\*#_]/g, '');
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.rate = 1.0;
+    
+    const voices = window.speechSynthesis.getVoices();
+    let selectedVoice = null;
+    
+    if (userLanguage === 'ml') {
+      selectedVoice = voices.find(v => v.lang.toLowerCase().startsWith('ml'));
+    } else if (userLanguage === 'manglish') {
+      selectedVoice = voices.find(v => v.lang.toLowerCase() === 'en-in');
+    } else {
+      selectedVoice = voices.find(v => v.lang.toLowerCase() === 'en-in');
+    }
+    
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    
     window.speechSynthesis.speak(utterance);
   };
 
@@ -285,17 +319,17 @@ export default function ChatPage() {
     <div className="h-[calc(100vh-8rem)] flex gap-8 max-w-6xl">
       
       {/* Middle Pane: Chat Console */}
-      <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col h-full overflow-hidden relative">
+      <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col h-full overflow-hidden relative light-theme:bg-white light-theme:border-zinc-200">
         
         {/* Chat Header */}
-        <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/40">
+        <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/40 light-theme:bg-zinc-50 light-theme:border-zinc-200">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-600/10 rounded-lg text-indigo-400">
+            <div className="p-2 bg-indigo-600/10 rounded-lg text-indigo-400 light-theme:text-indigo-600 light-theme:bg-indigo-50">
               <MessageSquare className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-white leading-none">Mentor Office Hours</h3>
-              <span className="text-[10px] text-zinc-500 font-medium">Ready to review ICAI Syllabus</span>
+              <h3 className="text-sm font-bold text-white leading-none light-theme:text-zinc-900">Mentor Office Hours</h3>
+              <span className="text-[10px] text-zinc-500 font-medium light-theme:text-zinc-400">Ready to review ICAI Syllabus</span>
             </div>
           </div>
 
@@ -308,7 +342,7 @@ export default function ChatPage() {
                   window.speechSynthesis.cancel();
                 }
               }}
-              className="p-2 bg-zinc-950 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+              className="p-2 bg-zinc-950 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg text-xs font-bold transition-colors cursor-pointer light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-650 light-theme:hover:bg-zinc-200 light-theme:hover:text-zinc-900"
               title={voiceEnabled ? 'Mute AI readback' : 'Enable AI readback'}
             >
               {voiceEnabled ? <Volume2 className="h-4.5 w-4.5 text-indigo-400" /> : <VolumeX className="h-4.5 w-4.5" />}
@@ -316,11 +350,11 @@ export default function ChatPage() {
 
             {/* Subject Filter Dropdown */}
             <div className="flex items-center gap-2">
-              <span className="text-zinc-500 text-[10px] uppercase font-bold">Focus Subject:</span>
+              <span className="text-zinc-500 text-[10px] uppercase font-bold light-theme:text-zinc-400">Focus Subject:</span>
               <select
                 value={selectedSubject}
                 onChange={(e) => setSelectedSubject(e.target.value)}
-                className="bg-zinc-950 border border-zinc-800 rounded-lg py-1 px-3 text-xs text-white focus:outline-none focus:border-indigo-500"
+                className="bg-zinc-950 border border-zinc-800 rounded-lg py-1 px-3 text-xs text-white focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
               >
                 <option value="">All Subjects</option>
                 {subjects.map((sub) => (
@@ -347,7 +381,7 @@ export default function ChatPage() {
                     <Sparkles className="h-4 w-4" />
                   </div>
                 ) : (
-                  <div className="h-8 w-8 bg-zinc-800 rounded-xl flex items-center justify-center text-zinc-300 flex-shrink-0 font-bold text-xs uppercase">
+                  <div className="h-8 w-8 bg-zinc-800 rounded-xl flex items-center justify-center text-zinc-300 flex-shrink-0 font-bold text-xs uppercase light-theme:bg-zinc-200 light-theme:text-zinc-750">
                     Me
                   </div>
                 )}
@@ -356,14 +390,14 @@ export default function ChatPage() {
                 <div className="space-y-2">
                   <div className={`p-4 rounded-2xl text-sm leading-relaxed ${
                     isMentor
-                      ? 'bg-zinc-950 text-zinc-100 border border-zinc-900'
+                      ? 'bg-zinc-950 text-zinc-100 border border-zinc-900 light-theme:bg-zinc-100 light-theme:text-zinc-800 light-theme:border-zinc-205'
                       : 'bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10'
                   }`}>
                     {renderFormattedText(msg.text)}
                   </div>
 
                   {/* Date & Citation markers */}
-                  <div className={`flex items-center gap-3 text-[10px] text-zinc-500 ${isMentor ? '' : 'justify-end'}`}>
+                  <div className={`flex items-center gap-3 text-[10px] text-zinc-500 light-theme:text-zinc-400 ${isMentor ? '' : 'justify-end'}`}>
                     <span>{msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     
                     {isMentor && (
@@ -379,7 +413,7 @@ export default function ChatPage() {
                         )}
                         <button
                           onClick={() => speakText(msg.text)}
-                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
+                          className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors light-theme:hover:bg-zinc-200 light-theme:text-zinc-500 light-theme:hover:text-zinc-900"
                           title="Read this message aloud"
                         >
                           <Volume2 className="h-3 w-3" />
@@ -397,7 +431,7 @@ export default function ChatPage() {
               <div className="h-8 w-8 bg-indigo-600 rounded-xl flex items-center justify-center text-white flex-shrink-0">
                 <Sparkles className="h-4 w-4" />
               </div>
-              <div className="p-4 bg-zinc-950 text-zinc-400 border border-zinc-900 rounded-2xl text-sm flex items-center gap-2">
+              <div className="p-4 bg-zinc-950 text-zinc-400 border border-zinc-900 rounded-2xl text-sm flex items-center gap-2 light-theme:bg-zinc-100 light-theme:text-zinc-600 light-theme:border-zinc-200">
                 <RefreshCw className="h-4 w-4 animate-spin text-indigo-500" />
                 <span>Mentor is reviewing ICAI modules...</span>
               </div>
@@ -408,7 +442,7 @@ export default function ChatPage() {
         </div>
 
         {/* Input Bar */}
-        <form onSubmit={handleSend} className="p-4 border-t border-zinc-800 bg-zinc-950/40 flex items-center gap-3">
+        <form onSubmit={handleSend} className="p-4 border-t border-zinc-800 bg-zinc-950/40 flex items-center gap-3 light-theme:bg-zinc-50 light-theme:border-zinc-200">
           {/* Audio voice recognition trigger */}
           <button
             type="button"
@@ -416,7 +450,7 @@ export default function ChatPage() {
             className={`p-3 rounded-xl border transition-all cursor-pointer ${
               isRecording
                 ? 'bg-red-500/20 border-red-500 text-red-500 animate-pulse'
-                : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-white hover:border-zinc-700'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-white hover:border-zinc-700 light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-500 light-theme:hover:text-zinc-900 light-theme:hover:border-zinc-300'
             }`}
             title={isRecording ? 'Listening... click to stop' : 'Speak questions'}
           >
@@ -429,7 +463,7 @@ export default function ChatPage() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={isRecording ? "Listening to your voice..." : "Ask a question (e.g. What is the difference between provision and reserve?)"}
-            className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 text-sm"
+            className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 text-sm light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-900 light-theme:placeholder-zinc-400"
           />
 
           <button
@@ -444,41 +478,41 @@ export default function ChatPage() {
       </div>
 
       {/* Right Pane: Citations Sidebar */}
-      <div className="w-80 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col h-full overflow-hidden">
+      <div className="w-80 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col h-full overflow-hidden light-theme:bg-white light-theme:border-zinc-200">
         {/* Header */}
-        <div className="p-4 border-b border-zinc-800 bg-zinc-950/40 flex items-center gap-2.5">
+        <div className="p-4 border-b border-zinc-800 bg-zinc-950/40 flex items-center gap-2.5 light-theme:bg-zinc-50 light-theme:border-zinc-200">
           <BookOpen className="h-5 w-5 text-indigo-400" />
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Source Citations</h3>
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider light-theme:text-zinc-800">Source Citations</h3>
         </div>
 
         {/* Citations List */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {activeCitations.length === 0 ? (
-            <div className="py-20 text-center text-zinc-500 space-y-2 px-4">
-              <Info className="h-8 w-8 text-zinc-700 mx-auto" />
-              <p className="text-white font-semibold text-xs">No active citations</p>
+            <div className="py-20 text-center text-zinc-500 space-y-2 px-4 light-theme:text-zinc-400">
+              <Info className="h-8 w-8 text-zinc-700 mx-auto light-theme:text-zinc-300" />
+              <p className="text-white font-semibold text-xs light-theme:text-zinc-700">No active citations</p>
               <p className="text-[10px]">Ask a curriculum query. Source pages from the ICAI Study Material will list here.</p>
             </div>
           ) : (
             activeCitations.map((cit, idx) => (
               <div
                 key={idx}
-                className="p-4 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 rounded-xl space-y-2 transition-all"
+                className="p-4 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 rounded-xl space-y-2 transition-all light-theme:bg-zinc-50 light-theme:border-zinc-200"
               >
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded-md">
                     Ref [{cit.source_num}]
                   </span>
-                  <span className="text-zinc-500 text-[10px]">
+                  <span className="text-zinc-500 text-[10px] light-theme:text-zinc-400">
                     Page {cit.page || 'N/A'}
                   </span>
                 </div>
                 
-                <h4 className="text-xs font-bold text-white leading-tight">
+                <h4 className="text-xs font-bold text-white leading-tight light-theme:text-zinc-850">
                   {cit.title}
                 </h4>
                 
-                <div className="flex items-center justify-between text-[10px] text-zinc-500 pt-1 border-t border-zinc-900">
+                <div className="flex items-center justify-between text-[10px] text-zinc-500 pt-1 border-t border-zinc-900 light-theme:text-zinc-400 light-theme:border-zinc-200">
                   <span>{cit.doc_type}</span>
                   <span className="font-mono text-indigo-400">
                     Match: {Math.round(cit.score * 100)}%

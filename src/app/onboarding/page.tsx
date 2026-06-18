@@ -15,8 +15,8 @@ const EXAM_ATTEMPTS = [
 
 const LANGUAGES = [
   { value: 'en', label: 'English' },
-  { value: 'hi', label: 'Hindi' },
-  { value: 'hinglish', label: 'Hinglish (mix)' },
+  { value: 'ml', label: 'Malayalam' },
+  { value: 'manglish', label: 'Manglish' },
 ];
 
 const STUDY_TIMES = [

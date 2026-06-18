@@ -28,7 +28,7 @@ export default function SettingsPage() {
     exam_attempt: '',
     exam_date: '',
     daily_study_hours: 4.0,
-    preferred_language: 'English',
+    preferred_language: 'en',
     preferred_study_time: 'Morning',
     strong_subjects: [] as string[],
     weak_subjects: [] as string[]
@@ -60,7 +60,7 @@ export default function SettingsPage() {
           exam_attempt: profileData.exam_attempt || '',
           exam_date: profileData.exam_date || '',
           daily_study_hours: Number(profileData.daily_study_hours) || 4.0,
-          preferred_language: profileData.preferred_language || 'English',
+          preferred_language: profileData.preferred_language || 'en',
           preferred_study_time: profileData.preferred_study_time || 'Morning',
           strong_subjects: profileData.strong_subjects || [],
           weak_subjects: profileData.weak_subjects || []
@@ -286,9 +286,9 @@ export default function SettingsPage() {
                     onChange={(e) => setProfile({ ...profile, preferred_language: e.target.value })}
                     className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-white text-xs focus:outline-none focus:border-indigo-500"
                   >
-                    <option value="English">Pure English (Academic)</option>
-                    <option value="Hindi">Hindi</option>
-                    <option value="Hinglish">Hinglish (Colloquial mix)</option>
+                    <option value="en">Pure English (Academic)</option>
+                    <option value="ml">Malayalam</option>
+                    <option value="manglish">Manglish (Malayalam mix)</option>
                   </select>
                 </div>
               </div>

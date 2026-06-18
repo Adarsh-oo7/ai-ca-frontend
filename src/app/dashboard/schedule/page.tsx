@@ -132,7 +132,7 @@ export default function SchedulePage() {
     <div className="space-y-8 max-w-6xl">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-black text-white">Study Calendar</h2>
+          <h2 className="text-2xl font-black text-white light-theme:text-zinc-900">Study Calendar</h2>
           <p className="text-zinc-500 text-sm">Add manual assignments, complete revision sets, or query the AI mentor to write schedules.</p>
         </div>
 
@@ -143,7 +143,7 @@ export default function SchedulePage() {
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              className="bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500"
+              className="bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
             />
           </div>
 
@@ -171,10 +171,10 @@ export default function SchedulePage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         
         {/* Schedule List */}
-        <div className="lg:col-span-8 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-6">
+        <div className="lg:col-span-8 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-6 light-theme:bg-white light-theme:border-zinc-200">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-4">
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Scheduled Tasks</h3>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider light-theme:text-zinc-850">Scheduled Tasks</h3>
               <div className="flex items-center gap-1.5 text-zinc-500 text-xs font-semibold">
                 <Clock className="h-4 w-4" />
                 <span>{completedHours.toFixed(1)} / {plannedHours.toFixed(1)} Hours Studied</span>
@@ -183,7 +183,7 @@ export default function SchedulePage() {
 
             <button
               onClick={() => setShowAddForm(!showAddForm)}
-              className="py-1.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-lg text-xs flex items-center gap-1 transition-all cursor-pointer"
+              className="py-1.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-lg text-xs flex items-center gap-1 transition-all cursor-pointer light-theme:bg-zinc-100 light-theme:text-zinc-650 light-theme:hover:bg-zinc-200 light-theme:hover:text-zinc-900"
             >
               <Plus className="h-4 w-4" />
               <span>Add Custom Task</span>
@@ -208,8 +208,8 @@ export default function SchedulePage() {
                   key={task.id}
                   className={`p-4 rounded-xl border flex items-center justify-between transition-all ${
                     task.is_completed
-                      ? 'bg-zinc-950/40 border-zinc-900 text-zinc-500'
-                      : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'
+                      ? 'bg-zinc-950/40 border-zinc-900 text-zinc-500 light-theme:bg-zinc-50 light-theme:border-zinc-200'
+                      : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700 light-theme:bg-zinc-50 light-theme:border-zinc-200 light-theme:hover:border-zinc-300'
                   }`}
                 >
                   <div className="flex items-center gap-3">
@@ -225,7 +225,7 @@ export default function SchedulePage() {
                       {task.is_completed && <CheckCircle className="h-4 w-4" />}
                     </button>
                     <div>
-                      <h4 className={`text-sm font-semibold ${task.is_completed ? 'line-through' : 'text-white'}`}>
+                      <h4 className={`text-sm font-semibold ${task.is_completed ? 'line-through light-theme:text-zinc-400' : 'text-white light-theme:text-zinc-800'}`}>
                         {task.title}
                       </h4>
                       <div className="flex items-center gap-2 text-[10px] text-zinc-500 mt-1">
@@ -261,10 +261,10 @@ export default function SchedulePage() {
 
         {/* Right column: Form */}
         {showAddForm && (
-          <div className="lg:col-span-4 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 h-fit space-y-6">
+          <div className="lg:col-span-4 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 h-fit space-y-6 light-theme:bg-white light-theme:border-zinc-200">
             <div className="flex items-center gap-2">
               <PlusCircle className="h-5 w-5 text-indigo-400" />
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider font-sans">Add Custom Task</h3>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider font-sans light-theme:text-zinc-850">Add Custom Task</h3>
             </div>
 
             <form onSubmit={handleCreateTask} className="space-y-4">
@@ -279,7 +279,7 @@ export default function SchedulePage() {
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="e.g. Solve Business Law Mock papers"
-                  className="w-full px-4 py-2.5 bg-zinc-955 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs placeholder-zinc-600 focus:outline-none focus:border-indigo-500"
+                  className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs placeholder-zinc-600 focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
                 />
               </div>
 
@@ -291,7 +291,7 @@ export default function SchedulePage() {
                 <select
                   value={taskType}
                   onChange={(e) => setTaskType(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500"
+                  className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
                 >
                   {TASK_TYPES.map((type) => (
                     <option key={type.value} value={type.value}>
@@ -309,7 +309,7 @@ export default function SchedulePage() {
                 <select
                   value={selectedSubject}
                   onChange={(e) => setSelectedSubject(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-zinc-955 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500"
+                  className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
                 >
                   <option value="">Select Subject (Optional)</option>
                   {subjects.map((sub) => (
@@ -331,7 +331,7 @@ export default function SchedulePage() {
                     required
                     value={duration}
                     onChange={(e) => setDuration(parseInt(e.target.value))}
-                    className="w-full px-4 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500"
+                    className="w-full px-4 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
                   />
                 </div>
                 <div>
@@ -343,7 +343,7 @@ export default function SchedulePage() {
                     required
                     value={time}
                     onChange={(e) => setTime(e.target.value)}
-                    className="w-full px-4 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500"
+                    className="w-full px-4 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
                   />
                 </div>
               </div>
@@ -358,7 +358,7 @@ export default function SchedulePage() {
                   onChange={(e) => setDesc(e.target.value)}
                   placeholder="Notes on what you need to review..."
                   rows={2}
-                  className="w-full px-4 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs placeholder-zinc-600 focus:outline-none focus:border-indigo-500 resize-none"
+                  className="w-full px-4 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs placeholder-zinc-600 focus:outline-none focus:border-indigo-500 resize-none light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
                 />
               </div>
 

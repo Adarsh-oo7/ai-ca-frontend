@@ -12,10 +12,15 @@ import {
   RefreshCw,
   Award,
   CheckCircle,
-  HelpCircle
+  HelpCircle,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX
 } from 'lucide-react';
 import { AIService } from '@/services/ai.service';
 import { CurriculumService } from '@/services/curriculum.service';
+import { AuthService } from '@/services/auth.service';
 
 interface TeachMessage {
   id: string;
@@ -65,7 +70,7 @@ const renderFormattedText = (text: string) => {
         parts.push(lineText.substring(lastIndex, index));
       }
       parts.push(
-        <strong key={index} className="font-extrabold text-indigo-400">
+        <strong key={index} className="font-extrabold text-indigo-400 light-theme:text-indigo-600">
           {match[1]}
         </strong>
       );
@@ -93,7 +98,7 @@ const renderFormattedText = (text: string) => {
         isNumberedList = true;
       }
       currentList.push(
-        <li key={`li-${index}`} className="text-zinc-200 ml-1">
+        <li key={`li-${index}`} className="text-zinc-200 ml-1 light-theme:text-zinc-800">
           {parseBoldText(numListMatch[1])}
         </li>
       );
@@ -103,7 +108,7 @@ const renderFormattedText = (text: string) => {
         isNumberedList = false;
       }
       currentList.push(
-        <li key={`li-${index}`} className="text-zinc-200 ml-1">
+        <li key={`li-${index}`} className="text-zinc-200 ml-1 light-theme:text-zinc-800">
           {parseBoldText(bulletListMatch[1])}
         </li>
       );
@@ -113,7 +118,7 @@ const renderFormattedText = (text: string) => {
         elements.push(<div key={`space-${index}`} className="h-2" />);
       } else {
         elements.push(
-          <p key={`p-${index}`} className="text-zinc-100 leading-relaxed">
+          <p key={`p-${index}`} className="text-zinc-100 leading-relaxed light-theme:text-zinc-850">
             {parseBoldText(line)}
           </p>
         );
@@ -140,8 +145,14 @@ export default function AITeacherPage() {
   const [citations, setCitations] = React.useState<any[]>([]);
   const [conceptChecks, setConceptChecks] = React.useState<string[]>([]);
   
+  // Voice states
+  const [isRecording, setIsRecording] = React.useState(false);
+  const [voiceEnabled, setVoiceEnabled] = React.useState(true);
+  const [userLanguage, setUserLanguage] = React.useState<string>('en');
+
   const sessionIdRef = React.useRef<string>(`teach_${topicId}_${Date.now()}`);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const recognitionRef = React.useRef<any>(null);
 
   const scrollToBottom = () => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -150,6 +161,85 @@ export default function AITeacherPage() {
   React.useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  React.useEffect(() => {
+    async function loadProfile() {
+      try {
+        const profileData = await AuthService.getProfile();
+        setUserLanguage(profileData.preferred_language || 'en');
+      } catch (e) {
+        console.error("Failed to load student profile language in classroom:", e);
+      }
+    }
+    loadProfile();
+
+    // Initialize Speech Recognition
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-IN'; // Default
+
+        recognition.onstart = () => setIsRecording(true);
+        recognition.onend = () => setIsRecording(false);
+        recognition.onerror = () => setIsRecording(false);
+        recognition.onresult = (event: any) => {
+          const text = event.results[0][0].transcript;
+          setInput(text);
+        };
+        recognitionRef.current = recognition;
+      }
+    }
+  }, []);
+
+  const toggleRecording = () => {
+    if (!recognitionRef.current) {
+      alert("Browser Speech Recognition is not supported on this browser. Try Chrome or Microsoft Edge!");
+      return;
+    }
+    if (isRecording) {
+      recognitionRef.current.stop();
+    } else {
+      // Set language dynamically based on user profile settings
+      if (userLanguage === 'ml' || userLanguage === 'manglish') {
+        recognitionRef.current.lang = 'ml-IN';
+      } else {
+        recognitionRef.current.lang = 'en-IN';
+      }
+      recognitionRef.current.start();
+    }
+  };
+
+  const speakText = (text: string) => {
+    if (!voiceEnabled || typeof window === 'undefined' || !window.speechSynthesis) return;
+    
+    // Stop any active speech
+    window.speechSynthesis.cancel();
+    
+    // Clean text of markdown blocks or brackets
+    const cleanText = text.replace(/\[Source \d+\]/g, '').replace(/[\*#_]/g, '');
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = 1.0;
+    
+    const voices = window.speechSynthesis.getVoices();
+    let selectedVoice = null;
+    
+    if (userLanguage === 'ml') {
+      selectedVoice = voices.find(v => v.lang.toLowerCase().startsWith('ml'));
+    } else if (userLanguage === 'manglish') {
+      selectedVoice = voices.find(v => v.lang.toLowerCase() === 'en-in');
+    } else {
+      selectedVoice = voices.find(v => v.lang.toLowerCase() === 'en-in');
+    }
+    
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    
+    window.speechSynthesis.speak(utterance);
+  };
 
   // Initial Load: Fetch topic and start teaching session
   React.useEffect(() => {
@@ -183,6 +273,9 @@ export default function AITeacherPage() {
         // Search response for potential questions (usually ends with a check)
         extractConceptChecks(response.ai_response);
 
+        // Auto-speak the first response
+        speakText(response.ai_response);
+
       } catch (e) {
         console.error("Error starting AI teaching session:", e);
       } finally {
@@ -209,6 +302,11 @@ export default function AITeacherPage() {
     setInput('');
     setSending(true);
 
+    // Cancel speech on new query
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+
     // Add user response to chat
     setMessages(prev => [
       ...prev,
@@ -233,6 +331,9 @@ export default function AITeacherPage() {
           citations: response.citations
         }
       ]);
+
+      // Auto-speak the response
+      speakText(response.ai_response);
 
       if (response.citations && response.citations.length > 0) {
         setCitations(response.citations);
@@ -268,26 +369,42 @@ export default function AITeacherPage() {
     <div className="h-[calc(100vh-8rem)] flex gap-8 max-w-6xl">
       
       {/* Middle Pane: Teaching Workspace */}
-      <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col h-full overflow-hidden">
+      <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col h-full overflow-hidden light-theme:bg-white light-theme:border-zinc-200">
         
         {/* Header */}
-        <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/40">
+        <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/40 light-theme:bg-zinc-50 light-theme:border-zinc-200">
           <div className="flex items-center gap-3">
             <Link
               href={`/dashboard/learn/${subjectId}`}
-              className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-white transition-colors"
+              className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-500 hover:text-white transition-colors light-theme:hover:bg-zinc-100 light-theme:text-zinc-500"
             >
               <ArrowLeft className="h-4 w-4" />
             </Link>
             <div>
-              <span className="text-[9px] text-zinc-500 font-bold uppercase leading-none">AI Study Desk</span>
-              <h3 className="text-xs font-bold text-white leading-tight mt-0.5">{topic?.name}</h3>
+              <span className="text-[9px] text-zinc-500 font-bold uppercase leading-none light-theme:text-zinc-400">AI Study Desk</span>
+              <h3 className="text-xs font-bold text-white leading-tight mt-0.5 light-theme:text-zinc-900">{topic?.name}</h3>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-500/10 border border-indigo-500/30 rounded-full text-indigo-400 text-[10px] font-bold">
-            <GraduationCap className="h-3.5 w-3.5" />
-            <span>Interactive Teach Mode</span>
+          <div className="flex items-center gap-3">
+            {/* Voice toggle */}
+            <button
+              onClick={() => {
+                setVoiceEnabled(!voiceEnabled);
+                if (typeof window !== 'undefined' && window.speechSynthesis) {
+                  window.speechSynthesis.cancel();
+                }
+              }}
+              className="p-1.5 bg-zinc-950 border border-zinc-855 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg text-xs font-bold transition-colors cursor-pointer light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-650 light-theme:hover:bg-zinc-200 light-theme:hover:text-zinc-900"
+              title={voiceEnabled ? 'Mute AI readback' : 'Enable AI readback'}
+            >
+              {voiceEnabled ? <Volume2 className="h-4 w-4 text-indigo-400" /> : <VolumeX className="h-4 w-4" />}
+            </button>
+
+            <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-500/10 border border-indigo-500/30 rounded-full text-indigo-400 text-[10px] font-bold">
+              <GraduationCap className="h-3.5 w-3.5" />
+              <span>Interactive Teach Mode</span>
+            </div>
           </div>
         </div>
 
@@ -305,7 +422,7 @@ export default function AITeacherPage() {
                     <Sparkles className="h-4 w-4" />
                   </div>
                 ) : (
-                  <div className="h-8 w-8 bg-zinc-800 rounded-xl flex items-center justify-center text-zinc-300 flex-shrink-0 font-bold text-xs uppercase">
+                  <div className="h-8 w-8 bg-zinc-800 rounded-xl flex items-center justify-center text-zinc-300 flex-shrink-0 font-bold text-xs uppercase light-theme:bg-zinc-200 light-theme:text-zinc-700">
                     Me
                   </div>
                 )}
@@ -313,14 +430,23 @@ export default function AITeacherPage() {
                 <div className="space-y-2">
                   <div className={`p-4 rounded-2xl text-sm leading-relaxed ${
                     isMentor
-                      ? 'bg-zinc-950 text-zinc-100 border border-zinc-900'
+                      ? 'bg-zinc-950 text-zinc-100 border border-zinc-900 light-theme:bg-zinc-100 light-theme:text-zinc-800 light-theme:border-zinc-200'
                       : 'bg-indigo-600 text-white font-medium shadow-md shadow-indigo-600/10'
                   }`}>
                     {renderFormattedText(msg.text)}
                   </div>
-                  <span className={`block text-[10px] text-zinc-600 ${isMentor ? '' : 'text-right'}`}>
-                    {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
+                  <div className={`flex items-center gap-3 text-[10px] text-zinc-500 light-theme:text-zinc-400 ${isMentor ? '' : 'justify-end'}`}>
+                    <span>{msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    {isMentor && (
+                      <button
+                        onClick={() => speakText(msg.text)}
+                        className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors cursor-pointer light-theme:hover:bg-zinc-200 light-theme:text-zinc-500 light-theme:hover:text-zinc-900"
+                        title="Read this message aloud"
+                      >
+                        <Volume2 className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -331,7 +457,7 @@ export default function AITeacherPage() {
               <div className="h-8 w-8 bg-indigo-600 rounded-xl flex items-center justify-center text-white flex-shrink-0">
                 <Sparkles className="h-4 w-4" />
               </div>
-              <div className="p-4 bg-zinc-950 text-zinc-400 border border-zinc-900 rounded-2xl text-sm flex items-center gap-2">
+              <div className="p-4 bg-zinc-950 text-zinc-400 border border-zinc-900 rounded-2xl text-sm flex items-center gap-2 light-theme:bg-zinc-100 light-theme:text-zinc-650 light-theme:border-zinc-200">
                 <RefreshCw className="h-4 w-4 animate-spin text-indigo-500" />
                 <span>Mentor is evaluating and outlining next steps...</span>
               </div>
@@ -342,14 +468,28 @@ export default function AITeacherPage() {
         </div>
 
         {/* Input area */}
-        <form onSubmit={handleSend} className="p-4 border-t border-zinc-800 bg-zinc-950/40 flex items-center gap-3">
+        <form onSubmit={handleSend} className="p-4 border-t border-zinc-800 bg-zinc-950/40 flex items-center gap-3 light-theme:bg-zinc-50 light-theme:border-zinc-200">
+          {/* Audio voice recognition trigger */}
+          <button
+            type="button"
+            onClick={toggleRecording}
+            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+              isRecording
+                ? 'bg-red-500/20 border-red-500 text-red-500 animate-pulse'
+                : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-white hover:border-zinc-700 light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-500 light-theme:hover:text-zinc-900 light-theme:hover:border-zinc-300'
+            }`}
+            title={isRecording ? 'Listening... click to stop' : 'Speak questions'}
+          >
+            {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+          </button>
+
           <input
             type="text"
             required
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your explanation or verify query here..."
-            className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 text-sm"
+            placeholder={isRecording ? "Listening to your voice..." : "Type your explanation or verify query here..."}
+            className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 text-sm light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-900 light-theme:placeholder-zinc-400"
           />
           <button
             type="submit"
@@ -366,19 +506,19 @@ export default function AITeacherPage() {
       <div className="w-80 flex flex-col gap-6 h-full">
         
         {/* Active Checks card */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col max-h-[45%]">
-          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-zinc-800">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col max-h-[45%] light-theme:bg-white light-theme:border-zinc-200">
+          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-zinc-800 light-theme:border-zinc-200">
             <HelpCircle className="h-4.5 w-4.5 text-indigo-400" />
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider">Active Checkpoint</h4>
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider light-theme:text-zinc-800">Active Checkpoint</h4>
           </div>
           <div className="flex-1 overflow-y-auto space-y-3 pr-1">
             {conceptChecks.length === 0 ? (
-              <p className="text-zinc-500 text-[10px] leading-relaxed text-center py-6">
+              <p className="text-zinc-500 text-[10px] leading-relaxed text-center py-6 light-theme:text-zinc-400">
                 No active checkpoints. Listen to the mentor's explanation first.
               </p>
             ) : (
               conceptChecks.map((q, idx) => (
-                <div key={idx} className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl text-[11px] text-zinc-300 leading-relaxed font-medium">
+                <div key={idx} className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl text-[11px] text-zinc-300 leading-relaxed font-medium light-theme:bg-zinc-50 light-theme:border-zinc-200 light-theme:text-zinc-750">
                   {q}
                 </div>
               ))
@@ -387,27 +527,27 @@ export default function AITeacherPage() {
         </div>
 
         {/* Reference citations card */}
-        <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col overflow-hidden">
-          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-zinc-800">
+        <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col overflow-hidden light-theme:bg-white light-theme:border-zinc-200">
+          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-zinc-800 light-theme:border-zinc-200">
             <BookOpen className="h-4.5 w-4.5 text-indigo-400" />
-            <h4 className="text-xs font-bold text-white uppercase tracking-wider">Syllabus References</h4>
+            <h4 className="text-xs font-bold text-white uppercase tracking-wider light-theme:text-zinc-800">Syllabus References</h4>
           </div>
           <div className="flex-1 overflow-y-auto space-y-3 pr-1">
             {citations.length === 0 ? (
-              <p className="text-zinc-500 text-[10px] text-center py-10">
+              <p className="text-zinc-500 text-[10px] text-center py-10 light-theme:text-zinc-400">
                 No syllabus reference docs cited for this explanation yet.
               </p>
             ) : (
               citations.map((cit, idx) => (
-                <div key={idx} className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl space-y-1">
+                <div key={idx} className="p-3 bg-zinc-950 border border-zinc-800 rounded-xl space-y-1 light-theme:bg-zinc-50 light-theme:border-zinc-200">
                   <div className="flex justify-between items-center">
                     <span className="text-[9px] font-bold text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded">
                       Ref [{cit.source_num}]
                     </span>
-                    <span className="text-zinc-500 text-[9px]">Page {cit.page || 'N/A'}</span>
+                    <span className="text-zinc-500 text-[9px] light-theme:text-zinc-400">Page {cit.page || 'N/A'}</span>
                   </div>
-                  <h5 className="text-[10px] font-bold text-white leading-snug">{cit.title}</h5>
-                  <p className="text-zinc-500 text-[9px] capitalize">{cit.doc_type}</p>
+                  <h5 className="text-[10px] font-bold text-white leading-snug light-theme:text-zinc-800">{cit.title}</h5>
+                  <p className="text-zinc-500 text-[9px] capitalize light-theme:text-zinc-400">{cit.doc_type}</p>
                 </div>
               ))
             )}

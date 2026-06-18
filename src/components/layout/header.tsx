@@ -219,9 +219,9 @@ export default function Header({ onMenuToggle }: HeaderProps) {
           </button>
 
           {dropdownOpen && (
-            <div className="absolute right-0 mt-2 w-80 bg-zinc-950 border border-zinc-800 rounded-2xl shadow-xl overflow-hidden z-50 py-2">
-              <div className="px-4 py-2 border-b border-zinc-900 flex justify-between items-center bg-zinc-900/40">
-                <span className="text-xs font-bold text-white uppercase tracking-wider">Notifications</span>
+            <div className="absolute right-0 mt-2 w-80 bg-zinc-950 border border-zinc-800 rounded-2xl shadow-xl overflow-hidden z-50 py-2 light-theme:bg-white light-theme:border-zinc-200">
+              <div className="px-4 py-2 border-b border-zinc-900 flex justify-between items-center bg-zinc-900/40 light-theme:bg-zinc-50 light-theme:border-zinc-200">
+                <span className="text-xs font-bold text-white uppercase tracking-wider light-theme:text-zinc-800">Notifications</span>
                 {unreadCount > 0 && (
                   <button
                     onClick={handleMarkAllRead}
@@ -232,39 +232,39 @@ export default function Header({ onMenuToggle }: HeaderProps) {
                 )}
               </div>
 
-              <div className="max-h-[320px] overflow-y-auto divide-y divide-zinc-900">
+              <div className="max-h-[320px] overflow-y-auto divide-y divide-zinc-900 light-theme:divide-zinc-100">
                 {notifications.length === 0 ? (
-                  <div className="py-12 text-center text-zinc-500 space-y-2 px-4">
-                    <Info className="h-6 w-6 text-zinc-700 mx-auto" />
-                    <p className="text-white font-bold text-xs">No notifications yet</p>
-                    <p className="text-[10px]">Your personal mentor reminders and test notifications will appear here.</p>
+                  <div className="py-12 text-center text-zinc-500 space-y-2 px-4 light-theme:text-zinc-400">
+                    <Info className="h-6 w-6 text-zinc-700 mx-auto light-theme:text-zinc-350" />
+                    <p className="text-white font-bold text-xs light-theme:text-zinc-700">No notifications yet</p>
+                    <p className="text-[10px] light-theme:text-zinc-500">Your personal mentor reminders and test notifications will appear here.</p>
                   </div>
                 ) : (
                   notifications.map((n) => (
                     <div
                       key={n.id}
                       onClick={() => handleNotificationClick(n)}
-                      className={`p-4 flex gap-3 cursor-pointer hover:bg-zinc-900 transition-colors ${
+                      className={`p-4 flex gap-3 cursor-pointer hover:bg-zinc-900 transition-colors light-theme:hover:bg-zinc-50 ${
                         !n.is_read ? 'bg-indigo-600/5' : ''
                       }`}
                     >
-                      <div className="h-8 w-8 rounded-xl bg-zinc-900 border border-zinc-850 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <div className="h-8 w-8 rounded-xl bg-zinc-900 border border-zinc-850 flex items-center justify-center flex-shrink-0 mt-0.5 light-theme:bg-zinc-100 light-theme:border-zinc-200">
                         {getNotificationIcon(n.notification_type)}
                       </div>
 
                       <div className="flex-1 space-y-1">
                         <div className="flex justify-between items-start gap-2">
-                          <h4 className={`text-xs text-white leading-tight ${!n.is_read ? 'font-bold' : 'font-medium'}`}>
+                          <h4 className={`text-xs text-white leading-tight light-theme:text-zinc-800 ${!n.is_read ? 'font-bold' : 'font-medium'}`}>
                             {n.title}
                           </h4>
                           {!n.is_read && (
                             <span className="h-2 w-2 rounded-full bg-indigo-500 flex-shrink-0 mt-1" />
                           )}
                         </div>
-                        <p className="text-[11px] text-zinc-400 leading-normal line-clamp-2">
+                        <p className="text-[11px] text-zinc-400 leading-normal line-clamp-2 light-theme:text-zinc-650">
                           {n.message}
                         </p>
-                        <span className="text-[9px] text-zinc-500 block pt-0.5">
+                        <span className="text-[9px] text-zinc-500 block pt-0.5 light-theme:text-zinc-400">
                           {formatRelativeTime(n.created_at)}
                         </span>
                       </div>
