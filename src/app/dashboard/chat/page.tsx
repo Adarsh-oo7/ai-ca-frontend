@@ -388,20 +388,41 @@ export default function ChatPage() {
     const cleanText = text.replace(/\[Source \d+\]/g, '').replace(/[\*#_]/g, '');
     
     const availableVoices = voices.length > 0 ? voices : window.speechSynthesis.getVoices();
+    let selectedVoice = null;
     let textToSpeak = cleanText;
+    let langToUse = 'en-IN';
     
-    // Check if the text contains Malayalam script characters. If so, transliterate to Latin script (Manglish)
-    const containsMalayalam = /[\u0D00-\u0D7F]/.test(cleanText);
-    if (containsMalayalam) {
-      textToSpeak = transliterateMalayalam(cleanText);
+    // Find Malayalam voice if present
+    let mlVoice = availableVoices.find(v => v.lang.toLowerCase().startsWith('ml'));
+    if (!mlVoice) {
+      mlVoice = availableVoices.find(
+        v => v.name.toLowerCase().includes('malayalam') || v.name.includes('മലയാളം')
+      );
     }
+
+    const containsMalayalam = /[\u0D00-\u0D7F]/.test(cleanText);
     
-    // Select Indian English voice for natural pronunciation of Manglish and English mix
-    const selectedVoice = availableVoices.find(
-      v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
-    );
-    
-    const langToUse = selectedVoice ? selectedVoice.lang : 'en-IN';
+    if (containsMalayalam && mlVoice) {
+      selectedVoice = mlVoice;
+      langToUse = mlVoice.lang;
+      textToSpeak = cleanText;
+    } else if (containsMalayalam && !mlVoice) {
+      // Fallback: transliterate to Manglish and use en-IN voice
+      const enInVoice = availableVoices.find(
+        v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
+      );
+      selectedVoice = enInVoice || null;
+      langToUse = selectedVoice ? selectedVoice.lang : 'en-IN';
+      textToSpeak = transliterateMalayalam(cleanText);
+    } else {
+      // English or Manglish text
+      const enInVoice = availableVoices.find(
+        v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
+      );
+      selectedVoice = enInVoice || null;
+      langToUse = selectedVoice ? selectedVoice.lang : 'en-IN';
+      textToSpeak = cleanText;
+    }
     
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
     utterance.rate = 1.0;
