@@ -171,7 +171,7 @@ export default function OnboardingPage() {
               <label className="block text-zinc-400 text-xs font-semibold mb-2 uppercase tracking-wide">
                 Target Exam Attempt
               </label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {EXAM_ATTEMPTS.map((attempt) => (
                   <button
                     key={attempt.value}
@@ -222,7 +222,7 @@ export default function OnboardingPage() {
               <label className="block text-zinc-400 text-xs font-semibold mb-2 uppercase tracking-wide">
                 Preferred Study block
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {STUDY_TIMES.map((time) => (
                   <button
                     key={time.value}
@@ -243,7 +243,7 @@ export default function OnboardingPage() {
               <label className="block text-zinc-400 text-xs font-semibold mb-2 uppercase tracking-wide">
                 Preferred Explanation Language
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {LANGUAGES.map((lang) => (
                   <button
                     key={lang.value}

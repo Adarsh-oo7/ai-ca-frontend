@@ -321,7 +321,7 @@ export default function SchedulePage() {
               </div>
 
               {/* Grid: Duration, Priority, Time */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-zinc-400 text-xs font-semibold mb-2 uppercase tracking-wide">
                     Duration (Min)

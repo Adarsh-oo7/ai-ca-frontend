@@ -195,7 +195,7 @@ export default function MockTestRoomPage() {
             </div>
             
             {results.weak_areas && results.weak_areas.length > 0 && (
-              <div className="pt-3 border-t border-indigo-500/20 grid grid-cols-2 gap-4 text-xs">
+              <div className="pt-3 border-t border-indigo-500/20 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                 <div>
                   <span className="block text-zinc-500 font-bold uppercase text-[10px]">Weak Areas:</span>
                   <span className="text-red-400 font-semibold">{results.weak_areas.join(', ')}</span>

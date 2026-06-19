@@ -211,7 +211,7 @@ export default function SettingsPage() {
                 <h3 className="text-sm font-bold text-white uppercase tracking-wider">Personal & Academic Info</h3>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-zinc-400 text-[10px] font-bold uppercase tracking-wider mb-2">Preferred Name</label>
                   <input
@@ -236,7 +236,7 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-zinc-400 text-[10px] font-bold uppercase tracking-wider mb-2">Target Exam Attempt</label>
                   <select
@@ -264,7 +264,7 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-zinc-400 text-[10px] font-bold uppercase tracking-wider mb-2">Preferred Study Time</label>
                   <select
@@ -313,7 +313,7 @@ export default function SettingsPage() {
               </div>
 
               {/* Theme & Voice UI */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-zinc-400 text-[10px] font-bold uppercase tracking-wider mb-2">Display Theme Mode</label>
                   <select
@@ -369,7 +369,7 @@ export default function SettingsPage() {
 
                 <div className="space-y-3">
                   {/* Master channel toggles */}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="flex items-center justify-between p-3 bg-zinc-950 border border-zinc-800 rounded-xl">
                       <span className="text-xs font-medium text-zinc-300">In-App Banner Notifications</span>
                       <input

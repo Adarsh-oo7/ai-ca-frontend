@@ -144,6 +144,7 @@ export default function ChatPage() {
   const [sending, setSending] = React.useState(false);
   const [activeCitations, setActiveCitations] = React.useState<any[]>([]);
   const [userLanguage, setUserLanguage] = React.useState<string>('en');
+  const [showCitationsMobile, setShowCitationsMobile] = React.useState(false);
   
   // Voice states
   const [isRecording, setIsRecording] = React.useState(false);
@@ -316,7 +317,7 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="h-[calc(100vh-8rem)] flex gap-8 max-w-6xl">
+    <div className="h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-4 lg:gap-8 max-w-6xl w-full">
       
       {/* Middle Pane: Chat Console */}
       <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col h-full overflow-hidden relative light-theme:bg-white light-theme:border-zinc-200">
@@ -333,7 +334,7 @@ export default function ChatPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
             {/* Voice toggle */}
             <button
               onClick={() => {
@@ -342,19 +343,32 @@ export default function ChatPage() {
                   window.speechSynthesis.cancel();
                 }
               }}
-              className="p-2 bg-zinc-950 border border-zinc-850 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg text-xs font-bold transition-colors cursor-pointer light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-650 light-theme:hover:bg-zinc-200 light-theme:hover:text-zinc-900"
+              className="p-2 bg-zinc-950 border border-zinc-855 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg text-xs font-bold transition-colors cursor-pointer light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-650 light-theme:hover:bg-zinc-200 light-theme:hover:text-zinc-900 animate-none"
               title={voiceEnabled ? 'Mute AI readback' : 'Enable AI readback'}
             >
-              {voiceEnabled ? <Volume2 className="h-4.5 w-4.5 text-indigo-400" /> : <VolumeX className="h-4.5 w-4.5" />}
+              {voiceEnabled ? <Volume2 className="h-4 w-4 text-indigo-400" /> : <VolumeX className="h-4 w-4" />}
+            </button>
+
+            {/* Citations toggle for mobile */}
+            <button
+              onClick={() => setShowCitationsMobile(!showCitationsMobile)}
+              className={`p-2 border rounded-lg text-xs font-bold transition-colors cursor-pointer lg:hidden ${
+                showCitationsMobile
+                  ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/10'
+                  : 'bg-zinc-950 border-zinc-855 text-zinc-400 hover:text-white hover:bg-zinc-800 light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-650 light-theme:hover:bg-zinc-200 light-theme:hover:text-zinc-900'
+              }`}
+              title="Toggle Citations"
+            >
+              <BookOpen className="h-4 w-4" />
             </button>
 
             {/* Subject Filter Dropdown */}
-            <div className="flex items-center gap-2">
-              <span className="text-zinc-500 text-[10px] uppercase font-bold light-theme:text-zinc-400">Focus Subject:</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-zinc-500 text-[10px] uppercase font-bold light-theme:text-zinc-400 hidden sm:inline">Focus Subject:</span>
               <select
                 value={selectedSubject}
                 onChange={(e) => setSelectedSubject(e.target.value)}
-                className="bg-zinc-950 border border-zinc-800 rounded-lg py-1 px-3 text-xs text-white focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
+                className="bg-zinc-950 border border-zinc-800 rounded-lg py-1 px-2.5 text-[11px] text-white focus:outline-none focus:border-indigo-500 max-w-[120px] sm:max-w-none light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
               >
                 <option value="">All Subjects</option>
                 {subjects.map((sub) => (
@@ -478,7 +492,7 @@ export default function ChatPage() {
       </div>
 
       {/* Right Pane: Citations Sidebar */}
-      <div className="w-80 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col h-full overflow-hidden light-theme:bg-white light-theme:border-zinc-200">
+      <div className={`w-full lg:w-80 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col ${showCitationsMobile ? 'h-64 mt-2' : 'hidden lg:flex'} lg:h-full overflow-hidden light-theme:bg-white light-theme:border-zinc-200 flex-shrink-0`}>
         {/* Header */}
         <div className="p-4 border-b border-zinc-800 bg-zinc-950/40 flex items-center gap-2.5 light-theme:bg-zinc-50 light-theme:border-zinc-200">
           <BookOpen className="h-5 w-5 text-indigo-400" />

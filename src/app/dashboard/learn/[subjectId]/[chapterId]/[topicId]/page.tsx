@@ -144,6 +144,7 @@ export default function AITeacherPage() {
   const [loading, setLoading] = React.useState(true);
   const [citations, setCitations] = React.useState<any[]>([]);
   const [conceptChecks, setConceptChecks] = React.useState<string[]>([]);
+  const [showCitationsMobile, setShowCitationsMobile] = React.useState(false);
   
   // Voice states
   const [isRecording, setIsRecording] = React.useState(false);
@@ -366,7 +367,7 @@ export default function AITeacherPage() {
   }
 
   return (
-    <div className="h-[calc(100vh-8rem)] flex gap-8 max-w-6xl">
+    <div className="h-[calc(100vh-8rem)] flex flex-col lg:flex-row gap-4 lg:gap-8 max-w-6xl w-full">
       
       {/* Middle Pane: Teaching Workspace */}
       <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-2xl flex flex-col h-full overflow-hidden light-theme:bg-white light-theme:border-zinc-200">
@@ -386,7 +387,7 @@ export default function AITeacherPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {/* Voice toggle */}
             <button
               onClick={() => {
@@ -395,15 +396,29 @@ export default function AITeacherPage() {
                   window.speechSynthesis.cancel();
                 }
               }}
-              className="p-1.5 bg-zinc-950 border border-zinc-855 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg text-xs font-bold transition-colors cursor-pointer light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-650 light-theme:hover:bg-zinc-200 light-theme:hover:text-zinc-900"
+              className="p-1.5 bg-zinc-950 border border-zinc-855 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg text-xs font-bold transition-colors cursor-pointer light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-650 light-theme:hover:bg-zinc-200 light-theme:hover:text-zinc-900 animate-none"
               title={voiceEnabled ? 'Mute AI readback' : 'Enable AI readback'}
             >
               {voiceEnabled ? <Volume2 className="h-4 w-4 text-indigo-400" /> : <VolumeX className="h-4 w-4" />}
             </button>
 
-            <div className="flex items-center gap-1.5 px-3 py-1 bg-indigo-500/10 border border-indigo-500/30 rounded-full text-indigo-400 text-[10px] font-bold">
+            {/* Citations toggle for mobile */}
+            <button
+              onClick={() => setShowCitationsMobile(!showCitationsMobile)}
+              className={`p-1.5 border rounded-lg text-xs font-bold transition-colors cursor-pointer lg:hidden ${
+                showCitationsMobile
+                  ? 'bg-indigo-600 border-indigo-500 text-white shadow-md shadow-indigo-600/10'
+                  : 'bg-zinc-950 border-zinc-855 text-zinc-400 hover:text-white hover:bg-zinc-800 light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-650 light-theme:hover:bg-zinc-200 light-theme:hover:text-zinc-900'
+              }`}
+              title="Toggle Syllabus Resources"
+            >
+              <BookOpen className="h-4 w-4" />
+            </button>
+
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-indigo-500/10 border border-indigo-500/30 rounded-full text-indigo-400 text-[10px] font-bold">
               <GraduationCap className="h-3.5 w-3.5" />
-              <span>Interactive Teach Mode</span>
+              <span className="hidden sm:inline">Interactive Teach Mode</span>
+              <span className="sm:hidden">Teach</span>
             </div>
           </div>
         </div>
@@ -503,7 +518,7 @@ export default function AITeacherPage() {
       </div>
 
       {/* Right Pane: Citations & Active checks */}
-      <div className="w-80 flex flex-col gap-6 h-full">
+      <div className={`w-full lg:w-80 flex flex-col gap-4 lg:gap-6 ${showCitationsMobile ? 'h-72 mt-2' : 'hidden lg:flex'} lg:h-full flex-shrink-0`}>
         
         {/* Active Checks card */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col max-h-[45%] light-theme:bg-white light-theme:border-zinc-200">
