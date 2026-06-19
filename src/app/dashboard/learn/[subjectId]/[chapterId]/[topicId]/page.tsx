@@ -196,6 +196,7 @@ export default function AITeacherPage() {
   const [messages, setMessages] = React.useState<TeachMessage[]>([]);
   const [input, setInput] = React.useState('');
   const [sending, setSending] = React.useState(false);
+  const sendingRef = React.useRef(false);
   const [loading, setLoading] = React.useState(true);
   const [citations, setCitations] = React.useState<any[]>([]);
   const [conceptChecks, setConceptChecks] = React.useState<string[]>([]);
@@ -273,9 +274,15 @@ export default function AITeacherPage() {
           }
         };
 
-        recognition.onresult = (event: any) => {
+        recognition.onresult = async (event: any) => {
           const text = event.results[0][0].transcript;
-          setInput(text);
+          if (!text.trim()) return;
+          
+          const containsMalayalam = /[\u0D00-\u0D7F]/.test(text);
+          const processedText = containsMalayalam ? transliterateMalayalam(text) : text;
+          
+          setInput(processedText);
+          await submitVoiceQuery(processedText);
         };
         recognitionRef.current = recognition;
       }
@@ -392,13 +399,12 @@ export default function AITeacherPage() {
     }
   };
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || sending) return;
+  const submitVoiceQuery = async (queryText: string) => {
+    if (!queryText.trim() || sendingRef.current) return;
 
-    const query = input;
     setInput('');
     setSending(true);
+    sendingRef.current = true;
 
     // Cancel speech on new query
     if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -411,13 +417,13 @@ export default function AITeacherPage() {
       {
         id: `student_${Date.now()}`,
         sender: 'student',
-        text: query,
+        text: queryText,
         timestamp: new Date()
       }
     ]);
 
     try {
-      const response = await AIService.teachConcept(topicId, sessionIdRef.current, query);
+      const response = await AIService.teachConcept(topicId, sessionIdRef.current, queryText);
       
       setMessages(prev => [
         ...prev,
@@ -451,7 +457,15 @@ export default function AITeacherPage() {
       ]);
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
+  };
+
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || sending) return;
+    const query = input;
+    await submitVoiceQuery(query);
   };
 
   if (loading) {

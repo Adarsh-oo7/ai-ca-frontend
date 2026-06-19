@@ -198,6 +198,7 @@ export default function ChatPage() {
   const [selectedSubject, setSelectedSubject] = React.useState<string>('');
   
   const [sending, setSending] = React.useState(false);
+  const sendingRef = React.useRef(false);
   const [activeCitations, setActiveCitations] = React.useState<any[]>([]);
   const [userLanguage, setUserLanguage] = React.useState<string>('en');
   const [showCitationsMobile, setShowCitationsMobile] = React.useState(false);
@@ -340,9 +341,15 @@ export default function ChatPage() {
           }
         };
 
-        recognition.onresult = (event: any) => {
+        recognition.onresult = async (event: any) => {
           const text = event.results[0][0].transcript;
-          setInput(text);
+          if (!text.trim()) return;
+          
+          const containsMalayalam = /[\u0D00-\u0D7F]/.test(text);
+          const processedText = containsMalayalam ? transliterateMalayalam(text) : text;
+          
+          setInput(processedText);
+          await submitVoiceQuery(processedText);
         };
         recognitionRef.current = recognition;
       }
@@ -424,13 +431,12 @@ export default function ChatPage() {
     setActiveCitations([]);
   };
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || sending) return;
+  const submitVoiceQuery = async (queryText: string) => {
+    if (!queryText.trim() || sendingRef.current) return;
 
-    const query = input;
     setInput('');
     setSending(true);
+    sendingRef.current = true;
 
     // Cancel speech on new query
     if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -442,7 +448,7 @@ export default function ChatPage() {
     const userMsg: Message = {
       id: userMsgId,
       sender: 'student',
-      text: query,
+      text: queryText,
       timestamp: new Date()
     };
     
@@ -450,7 +456,7 @@ export default function ChatPage() {
 
     try {
       const response = await AIService.sendMessage(
-        query,
+        queryText,
         selectedSubject || undefined,
         undefined,
         sessionId
@@ -486,7 +492,15 @@ export default function ChatPage() {
       ]);
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
+  };
+
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || sending) return;
+    const query = input;
+    await submitVoiceQuery(query);
   };
 
   return (
