@@ -132,3 +132,50 @@ body {
   color: #18181b !important;
 }
 
+/* Global Light Theme Tailwind Utility Overrides */
+.light-theme .bg-zinc-900,
+.light-theme .bg-zinc-950 {
+  background-color: var(--card) !important;
+}
+
+.light-theme .bg-zinc-950\/40,
+.light-theme .bg-zinc-900\/40,
+.light-theme .bg-zinc-900\/50 {
+  background-color: var(--background) !important;
+}
+
+.light-theme .border-zinc-800,
+.light-theme .border-zinc-850,
+.light-theme .border-zinc-855,
+.light-theme .border-zinc-900 {
+  border-color: var(--border) !important;
+}
+
+.light-theme .bg-zinc-950 :is(p, h1, h2, h3, h4, h5, h6, li, label, input, select, textarea, .text-white:not(button, a, [class*="bg-indigo"], [class*="bg-emerald"], [class*="bg-red"], [class*="bg-amber"], [class*="bg-purple"], [class*="bg-teal"], [class*="bg-blue"])),
+.light-theme .bg-zinc-900 :is(p, h1, h2, h3, h4, h5, h6, li, label, input, select, textarea, .text-white:not(button, a, [class*="bg-indigo"], [class*="bg-emerald"], [class*="bg-red"], [class*="bg-amber"], [class*="bg-purple"], [class*="bg-teal"], [class*="bg-blue"])),
+.light-theme .bg-zinc-900\/50 :is(p, h1, h2, h3, h4, h5, h6, li, label, input, select, textarea, .text-white:not(button, a, [class*="bg-indigo"], [class*="bg-emerald"], [class*="bg-red"], [class*="bg-amber"], [class*="bg-purple"], [class*="bg-teal"], [class*="bg-blue"])) {
+  color: var(--foreground) !important;
+}
+
+.light-theme .text-zinc-100,
+.light-theme .text-zinc-200,
+.light-theme .text-zinc-300,
+.light-theme .text-zinc-350 {
+  color: var(--foreground) !important;
+}
+
+.light-theme .text-zinc-400 {
+  color: var(--muted-foreground) !important;
+}
+
+.light-theme input::placeholder,
+.light-theme textarea::placeholder {
+  color: var(--muted-foreground) !important;
+}
+
+.light-theme .hover\:bg-zinc-900:hover,
+.light-theme .hover\:bg-zinc-800:hover {
+  background-color: var(--background) !important;
+}
+
+
