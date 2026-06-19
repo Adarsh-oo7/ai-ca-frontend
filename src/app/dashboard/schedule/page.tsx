@@ -7,10 +7,14 @@ import {
   Plus,
   CheckCircle,
   Clock,
-  Play,
   Trash2,
   RefreshCw,
-  PlusCircle
+  PlusCircle,
+  CalendarCheck,
+  ArrowRightLeft,
+  Zap,
+  Link2,
+  Unlink
 } from 'lucide-react';
 import { ScheduleService } from '@/services/schedule.service';
 import { CurriculumService } from '@/services/curriculum.service';
@@ -31,9 +35,30 @@ const PRIORITIES = [
   { value: 4, label: 'Low' },
 ];
 
+interface StudyTask {
+  id: string;
+  title: string;
+  description: string;
+  task_type: string;
+  task_type_display: string;
+  subject_name?: string;
+  duration_minutes: number;
+  priority: number;
+  scheduled_time: string;
+  is_completed: boolean;
+  google_event_id?: string;
+  is_ai_generated?: boolean;
+  ai_reason?: string;
+}
+
+interface Subject {
+  id: string;
+  name: string;
+}
+
 export default function SchedulePage() {
-  const [tasks, setTasks] = React.useState<any[]>([]);
-  const [subjects, setSubjects] = React.useState<any[]>([]);
+  const [tasks, setTasks] = React.useState<StudyTask[]>([]);
+  const [subjects, setSubjects] = React.useState<Subject[]>([]);
   const [date, setDate] = React.useState(new Date().toISOString().split('T')[0]);
   
   // Create task modal/form state
@@ -49,6 +74,12 @@ export default function SchedulePage() {
   const [generating, setGenerating] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const [showAddForm, setShowAddForm] = React.useState(false);
+  
+  // Google Calendar states
+  const [calendarConnected, setCalendarConnected] = React.useState(false);
+  const [syncingCalendar, setSyncingCalendar] = React.useState(false);
+  const [autoScheduling, setAutoScheduling] = React.useState(false);
+  const [rescheduling, setRescheduling] = React.useState(false);
 
   const loadTasksAndSubjects = React.useCallback(async () => {
     try {
@@ -65,8 +96,22 @@ export default function SchedulePage() {
   }, [date]);
 
   React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadTasksAndSubjects();
   }, [loadTasksAndSubjects]);
+
+  // Check Google Calendar status
+  React.useEffect(() => {
+    async function checkCalendar() {
+      try {
+        const status = await ScheduleService.getCalendarStatus();
+        setCalendarConnected(status.connected);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    checkCalendar();
+  }, []);
 
   const handleGeneratePlan = async () => {
     setGenerating(true);
@@ -77,6 +122,39 @@ export default function SchedulePage() {
       console.error(e);
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleAutoScheduleWeek = async () => {
+    setAutoScheduling(true);
+    try {
+      const startDate = date;
+      const endDateObj = new Date(date);
+      endDateObj.setDate(endDateObj.getDate() + 6);
+      const endDate = endDateObj.toISOString().split('T')[0];
+      
+      await ScheduleService.autoScheduleWeek(startDate, endDate);
+      // Wait a bit for Celery to process, then reload
+      setTimeout(() => {
+        loadTasksAndSubjects();
+        setAutoScheduling(false);
+      }, 3000);
+    } catch (e) {
+      console.error(e);
+      setAutoScheduling(false);
+    }
+  };
+
+  const handleRescheduleMissed = async () => {
+    setRescheduling(true);
+    try {
+      const result = await ScheduleService.rescheduleMissed();
+      alert(result.message || 'Rescheduling complete');
+      await loadTasksAndSubjects();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setRescheduling(false);
     }
   };
 
@@ -125,6 +203,39 @@ export default function SchedulePage() {
     }
   };
 
+  const handleConnectCalendar = async () => {
+    try {
+      const result = await ScheduleService.connectCalendar();
+      if (result.auth_url) {
+        window.open(result.auth_url, '_blank', 'width=500,height=600');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDisconnectCalendar = async () => {
+    try {
+      await ScheduleService.disconnectCalendar();
+      setCalendarConnected(false);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSyncCalendar = async () => {
+    setSyncingCalendar(true);
+    try {
+      const result = await ScheduleService.syncToCalendar(date);
+      alert(`Synced ${result.synced} tasks to Google Calendar${result.errors > 0 ? ` (${result.errors} errors)` : ''}`);
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      alert(err?.response?.data?.error || 'Failed to sync');
+    } finally {
+      setSyncingCalendar(false);
+    }
+  };
+
   const completedHours = tasks.filter(t => t.is_completed).reduce((acc, t) => acc + (t.duration_minutes || 0), 0) / 60.0;
   const plannedHours = tasks.reduce((acc, t) => acc + (t.duration_minutes || 0), 0) / 60.0;
 
@@ -136,8 +247,8 @@ export default function SchedulePage() {
           <p className="text-zinc-500 text-sm">Add manual assignments, complete revision sets, or query the AI mentor to write schedules.</p>
         </div>
 
-        {/* Date Selector & Generator */}
-        <div className="flex items-center gap-3">
+        {/* Date Selector & Actions */}
+        <div className="flex flex-wrap items-center gap-3">
           <div className="relative">
             <input
               type="date"
@@ -160,10 +271,91 @@ export default function SchedulePage() {
             ) : (
               <>
                 <Sparkles className="h-4.5 w-4.5" />
-                <span>AI Generate Schedule</span>
+                <span>AI Generate</span>
               </>
             )}
           </button>
+
+          <button
+            onClick={handleAutoScheduleWeek}
+            disabled={autoScheduling}
+            className="flex items-center gap-2 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-all disabled:opacity-50 cursor-pointer shadow-lg shadow-emerald-600/10"
+            title="Auto-schedule 7 days starting from selected date"
+          >
+            {autoScheduling ? (
+              <>
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                <span className="hidden sm:inline">Scheduling...</span>
+              </>
+            ) : (
+              <>
+                <Zap className="h-4 w-4" />
+                <span className="hidden sm:inline">Auto Week</span>
+              </>
+            )}
+          </button>
+
+          <button
+            onClick={handleRescheduleMissed}
+            disabled={rescheduling}
+            className="flex items-center gap-2 py-2.5 px-3 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl text-xs transition-all disabled:opacity-50 cursor-pointer"
+            title="Reschedule yesterday's missed tasks to today"
+          >
+            {rescheduling ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArrowRightLeft className="h-4 w-4" />
+            )}
+            <span className="hidden sm:inline">Reschedule</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Google Calendar Bar */}
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex flex-wrap items-center justify-between gap-3 light-theme:bg-white light-theme:border-zinc-200">
+        <div className="flex items-center gap-3">
+          <div className={`p-2 rounded-lg ${calendarConnected ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-800 text-zinc-500 light-theme:bg-zinc-100 light-theme:text-zinc-400'}`}>
+            <CalendarIcon className="h-5 w-5" />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-white light-theme:text-zinc-800">Google Calendar</h4>
+            <p className="text-[10px] text-zinc-500">
+              {calendarConnected ? '✅ Connected — Sync study tasks to your calendar' : 'Connect to sync tasks and get reminders'}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {calendarConnected ? (
+            <>
+              <button
+                onClick={handleSyncCalendar}
+                disabled={syncingCalendar}
+                className="flex items-center gap-1.5 py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs transition-all cursor-pointer disabled:opacity-50"
+              >
+                {syncingCalendar ? (
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <CalendarCheck className="h-3.5 w-3.5" />
+                )}
+                <span>Sync Day</span>
+              </button>
+              <button
+                onClick={handleDisconnectCalendar}
+                className="flex items-center gap-1.5 py-2 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white font-bold rounded-lg text-xs transition-all cursor-pointer light-theme:bg-zinc-100 light-theme:text-zinc-500"
+              >
+                <Unlink className="h-3.5 w-3.5" />
+                <span>Disconnect</span>
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={handleConnectCalendar}
+              className="flex items-center gap-1.5 py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs transition-all cursor-pointer"
+            >
+              <Link2 className="h-3.5 w-3.5" />
+              <span>Connect Calendar</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -199,7 +391,7 @@ export default function SchedulePage() {
             <div className="py-20 text-center text-zinc-500 space-y-2 border border-dashed border-zinc-800 rounded-xl">
               <CalendarIcon className="h-10 w-10 text-zinc-700 mx-auto" />
               <p className="text-white font-semibold text-sm">No tasks planned for this date</p>
-              <p className="text-xs max-w-xs mx-auto">Click "AI Generate Schedule" above to let the mentor plan this day based on your syllabus queue.</p>
+              <p className="text-xs max-w-xs mx-auto">Click &quot;AI Generate&quot; above to let the mentor plan this day based on your syllabus queue.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -225,9 +417,21 @@ export default function SchedulePage() {
                       {task.is_completed && <CheckCircle className="h-4 w-4" />}
                     </button>
                     <div>
-                      <h4 className={`text-sm font-semibold ${task.is_completed ? 'line-through light-theme:text-zinc-400' : 'text-white light-theme:text-zinc-800'}`}>
-                        {task.title}
-                      </h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className={`text-sm font-semibold ${task.is_completed ? 'line-through light-theme:text-zinc-400' : 'text-white light-theme:text-zinc-800'}`}>
+                          {task.title}
+                        </h4>
+                        {task.is_ai_generated && (
+                          <span className="text-[9px] font-bold text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
+                            <Sparkles className="h-2.5 w-2.5" /> AI
+                          </span>
+                        )}
+                        {task.google_event_id && (
+                          <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-md flex items-center gap-0.5">
+                            <CalendarCheck className="h-2.5 w-2.5" /> Synced
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 text-[10px] text-zinc-500 mt-1">
                         <span className="font-semibold">{task.task_type_display}</span>
                         <span>•</span>
@@ -241,6 +445,9 @@ export default function SchedulePage() {
                           </>
                         )}
                       </div>
+                      {task.ai_reason && (
+                        <p className="text-[9px] text-zinc-600 mt-0.5 italic">{task.ai_reason}</p>
+                      )}
                     </div>
                   </div>
 
@@ -321,7 +528,7 @@ export default function SchedulePage() {
               </div>
 
               {/* Grid: Duration, Priority, Time */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-zinc-400 text-xs font-semibold mb-2 uppercase tracking-wide">
                     Duration (Min)
@@ -333,6 +540,22 @@ export default function SchedulePage() {
                     onChange={(e) => setDuration(parseInt(e.target.value))}
                     className="w-full px-4 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
                   />
+                </div>
+                <div>
+                  <label className="block text-zinc-400 text-xs font-semibold mb-2 uppercase tracking-wide">
+                    Priority
+                  </label>
+                  <select
+                    value={priority}
+                    onChange={(e) => setPriority(parseInt(e.target.value))}
+                    className="w-full px-4 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-800"
+                  >
+                    {PRIORITIES.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-zinc-400 text-xs font-semibold mb-2 uppercase tracking-wide">

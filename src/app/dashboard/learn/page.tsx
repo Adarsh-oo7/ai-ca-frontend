@@ -2,39 +2,47 @@
 
 import React from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import {
-  BookOpen,
-  GraduationCap,
   Clock,
-  Award,
   ChevronRight,
-  TrendingUp,
   RefreshCw
 } from 'lucide-react';
 import { CurriculumService } from '@/services/curriculum.service';
 import { MemoryService } from '@/services/memory.service';
 
+interface Subject {
+  id: string;
+  name: string;
+  code?: string;
+  color?: string;
+  description?: string;
+}
+
+interface SubjectMemory {
+  subject: string;
+  strength_score?: number;
+  confidence_score?: number;
+  total_time_spent?: number;
+}
+
 export default function LearnPage() {
-  const router = useRouter();
-  const [subjects, setSubjects] = React.useState<any[]>([]);
-  const [memories, setMemories] = React.useState<Record<string, any>>({});
+  const [subjects, setSubjects] = React.useState<Subject[]>([]);
+  const [memories, setMemories] = React.useState<Record<string, SubjectMemory>>({});
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
     async function loadSubjectsAndMemories() {
       try {
         const subs = await CurriculumService.getSubjects();
-        const subjectsList = Array.isArray(subs) ? subs : subs.results || [];
+        const subjectsList: Subject[] = Array.isArray(subs) ? subs : subs.results || [];
         setSubjects(subjectsList);
 
         const mems = await MemoryService.getSubjectMemories();
-        const memoriesMap: Record<string, any> = {};
-        if (Array.isArray(mems)) {
-          mems.forEach((m: any) => {
-            memoriesMap[m.subject] = m;
-          });
-        }
+        const memoriesList: SubjectMemory[] = Array.isArray(mems) ? mems : mems.results || [];
+        const memoriesMap: Record<string, SubjectMemory> = {};
+        memoriesList.forEach((m: SubjectMemory) => {
+          memoriesMap[m.subject] = m;
+        });
         setMemories(memoriesMap);
       } catch (e) {
         console.error("Error loading curriculum details:", e);

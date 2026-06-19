@@ -1,32 +1,58 @@
 'use client';
 
 import React from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft,
-  BookOpen,
   Clock,
   Award,
   ChevronDown,
   ChevronUp,
-  AlertTriangle,
   Play,
-  CheckCircle,
   RefreshCw
 } from 'lucide-react';
 import { CurriculumService } from '@/services/curriculum.service';
 import { MemoryService } from '@/services/memory.service';
 
+interface Subject {
+  id: string;
+  name: string;
+  code?: string;
+  color?: string;
+  description?: string;
+}
+
+interface Chapter {
+  id: string;
+  name: string;
+  order: number;
+  estimated_hours: number;
+  weightage: number;
+}
+
+interface ChapterMemory {
+  chapter: string;
+  completion_percentage?: number;
+  understanding_score?: number;
+  forgetting_risk?: number;
+}
+
+interface Topic {
+  id: string;
+  name: string;
+  estimated_minutes: number;
+  importance_display: string;
+}
+
 export default function SubjectChaptersPage() {
   const params = useParams();
-  const router = useRouter();
   const subjectId = params.subjectId as string;
 
-  const [subject, setSubject] = React.useState<any>(null);
-  const [chapters, setChapters] = React.useState<any[]>([]);
-  const [chapterMemories, setChapterMemories] = React.useState<Record<string, any>>({});
-  const [topicsByChapter, setTopicsByChapter] = React.useState<Record<string, any[]>>({});
+  const [subject, setSubject] = React.useState<Subject | null>(null);
+  const [chapters, setChapters] = React.useState<Chapter[]>([]);
+  const [chapterMemories, setChapterMemories] = React.useState<Record<string, ChapterMemory>>({});
+  const [topicsByChapter, setTopicsByChapter] = React.useState<Record<string, Topic[]>>({});
   const [expandedChapter, setExpandedChapter] = React.useState<string | null>(null);
   
   const [loading, setLoading] = React.useState(true);
@@ -40,17 +66,16 @@ export default function SubjectChaptersPage() {
 
         // Fetch Chapters list
         const chaps = await CurriculumService.getChapters(subjectId);
-        const chaptersList = Array.isArray(chaps) ? chaps : chaps.results || [];
+        const chaptersList: Chapter[] = Array.isArray(chaps) ? chaps : chaps.results || [];
         setChapters(chaptersList);
 
         // Fetch Chapter memories to map completion and forgetting risks
         const mems = await MemoryService.getChapterMemories();
-        const memoriesMap: Record<string, any> = {};
-        if (Array.isArray(mems)) {
-          mems.forEach((m: any) => {
-            memoriesMap[m.chapter] = m;
-          });
-        }
+        const memoriesList: ChapterMemory[] = Array.isArray(mems) ? mems : mems.results || [];
+        const memoriesMap: Record<string, ChapterMemory> = {};
+        memoriesList.forEach((m: ChapterMemory) => {
+          memoriesMap[m.chapter] = m;
+        });
         setChapterMemories(memoriesMap);
       } catch (e) {
         console.error(e);
@@ -73,7 +98,7 @@ export default function SubjectChaptersPage() {
     if (!topicsByChapter[chapterId]) {
       try {
         const topics = await CurriculumService.getTopics(chapterId);
-        const topicsList = Array.isArray(topics) ? topics : topics.results || [];
+        const topicsList: Topic[] = Array.isArray(topics) ? topics : topics.results || [];
         setTopicsByChapter(prev => ({
           ...prev,
           [chapterId]: topicsList

@@ -18,6 +18,18 @@ export const AIService = {
     return response.data;
   },
 
+  async getChatSessions(type?: string) {
+    const response = await api.get('/api/ai/chat/sessions/', {
+      params: type ? { type } : {}
+    });
+    return response.data;
+  },
+
+  async deleteSession(sessionId: string) {
+    const response = await api.delete(`/api/ai/chat/sessions/${sessionId}/`);
+    return response.data;
+  },
+
   async teachConcept(topicId: number | string, sessionId: string, message?: string) {
     const response = await api.post('/api/ai/teach/teach_concept/', {
       topic: topicId,
@@ -37,7 +49,7 @@ export const AIService = {
     return response.data;
   },
 
-  async updateSettings(data: any) {
+  async updateSettings(data: Record<string, unknown>) {
     const response = await api.put('/api/ai/settings/1/', data);
     return response.data;
   }
