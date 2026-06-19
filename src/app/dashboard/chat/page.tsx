@@ -14,7 +14,8 @@ import {
   Smile,
   RefreshCw,
   Volume2,
-  VolumeX
+  VolumeX,
+  PlusCircle
 } from 'lucide-react';
 import { AIService } from '@/services/ai.service';
 import { CurriculumService } from '@/services/curriculum.service';
@@ -128,6 +129,61 @@ const renderFormattedText = (text: string) => {
   return <div className="space-y-1.5">{elements}</div>;
 };
 
+const transliterateMalayalam = (text: string): string => {
+  const consonants: { [key: string]: string } = {
+    'ക': 'k', 'ഖ': 'kh', 'ഗ': 'g', 'ഘ': 'gh', 'ങ': 'ng',
+    'ച': 'ch', 'ഛ': 'chh', 'ജ': 'j', 'ഝ': 'jh', 'ഞ': 'ny',
+    'ട': 't', 'ഠ': 'th', 'ഡ': 'd', 'ഢ': 'dh', 'ണ': 'n',
+    'ത': 'th', 'ഥ': 'thh', 'ദ': 'd', 'ധ': 'dh', 'ന': 'n',
+    'പ': 'p', 'ഫ': 'ph', 'ബ': 'b', 'ഭ': 'bh', 'മ': 'm',
+    'യ': 'y', 'ര': 'r', 'ല': 'l', 'വ': 'v', 'ശ': 'sh', 'ഷ': 'sh', 'സ': 's', 'ഹ': 'h',
+    'ള': 'l', 'ഴ': 'zh', 'റ': 'r', 'റ്റ': 'tt'
+  };
+
+  const vowels: { [key: string]: string } = {
+    'അ': 'a', 'ആ': 'aa', 'ഇ': 'i', 'ഈ': 'ee', 'ഉ': 'u', 'ഊ': 'oo', 'ഋ': 'ri',
+    'എ': 'e', 'ഏ': 'ae', 'ഐ': 'ai', 'ഒ': 'o', 'ഓ': 'oa', 'ഔ': 'au'
+  };
+
+  const vowelSigns: { [key: string]: string } = {
+    'ാ': 'aa', 'ി': 'i', 'ീ': 'ee', 'ു': 'u', 'ൂ': 'oo', 'ൃ': 'ri',
+    'െ': 'e', 'േ': 'ae', 'ൈ': 'ai', 'ൊ': 'o', 'ോ': 'oa', 'ൌ': 'au'
+  };
+
+  const otherSigns: { [key: string]: string } = {
+    'ൽ': 'l', 'ൻ': 'n', 'ർ': 'r', 'ൾ': 'l', 'ൺ': 'n', 'ം': 'm', 'ഃ': 'h'
+  };
+
+  let result = '';
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    
+    if (consonants[char] !== undefined) {
+      const nextChar = text[i + 1];
+      if (nextChar && vowelSigns[nextChar] !== undefined) {
+        result += consonants[char] + vowelSigns[nextChar];
+        i++; // skip next char
+      } else if (nextChar === '്') {
+        result += consonants[char];
+        i++; // skip virama
+      } else {
+        result += consonants[char] + 'a';
+      }
+    } else if (vowels[char] !== undefined) {
+      result += vowels[char];
+    } else if (otherSigns[char] !== undefined) {
+      result += otherSigns[char];
+    } else if (vowelSigns[char] !== undefined) {
+      result += vowelSigns[char];
+    } else if (char === '്') {
+      result += 'u';
+    } else {
+      result += char;
+    }
+  }
+  return result;
+};
+
 export default function ChatPage() {
   const [messages, setMessages] = React.useState<Message[]>([
     {
@@ -152,7 +208,7 @@ export default function ChatPage() {
   const [voices, setVoices] = React.useState<SpeechSynthesisVoice[]>([]);
   
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
-  const sessionIdRef = React.useRef<string>(`chat_${Date.now()}`);
+  const [sessionId, setSessionId] = React.useState<string>('');
   const recognitionRef = React.useRef<any>(null);
 
   const scrollToBottom = () => {
@@ -180,6 +236,63 @@ export default function ChatPage() {
       };
     }
   }, []);
+
+  // Initialize session ID from localStorage
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      let activeSessionId = localStorage.getItem('ai_chat_session_id');
+      if (!activeSessionId) {
+        activeSessionId = `chat_${Date.now()}`;
+        localStorage.setItem('ai_chat_session_id', activeSessionId);
+      }
+      setSessionId(activeSessionId);
+    }
+  }, []);
+
+  // Fetch chat history once session ID is loaded
+  React.useEffect(() => {
+    if (!sessionId) return;
+    async function loadChatHistory() {
+      try {
+        const history = await AIService.getChatHistory(sessionId);
+        if (history && history.length > 0) {
+          const formattedMsgs = history.map((log: any) => [
+            {
+              id: `user_${log.id}`,
+              sender: 'student' as const,
+              text: log.user_message,
+              timestamp: new Date(log.created_at || Date.now())
+            },
+            {
+              id: `mentor_${log.id}`,
+              sender: 'mentor' as const,
+              text: log.ai_response,
+              timestamp: new Date(log.created_at || Date.now()),
+              citations: log.citations || []
+            }
+          ]).flat();
+          
+          setMessages([
+            {
+              id: 'welcome',
+              sender: 'mentor',
+              text: "Hello! I am your personal CA Foundation AI mentor. Ask me anything about Accounting, Business Laws, Math/Stats, or Economics, and I will search your ICAI library to give you precise answers with citations. You can also click the Mic icon to speak to me!",
+              timestamp: new Date(history[0].created_at || Date.now())
+            },
+            ...formattedMsgs
+          ]);
+          
+          const lastLog = history[history.length - 1];
+          if (lastLog && lastLog.citations && lastLog.citations.length > 0) {
+            setActiveCitations(lastLog.citations);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load chat history:", err);
+      }
+    }
+    loadChatHistory();
+  }, [sessionId]);
 
   React.useEffect(() => {
     async function loadSubjects() {
@@ -266,11 +379,11 @@ export default function ChatPage() {
     
     // Clean text of markdown blocks or brackets
     const cleanText = text.replace(/\[Source \d+\]/g, '').replace(/[\*#_]/g, '');
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.rate = 1.0;
     
     const availableVoices = voices.length > 0 ? voices : window.speechSynthesis.getVoices();
     let selectedVoice = null;
+    let textToSpeak = cleanText;
+    let langToUse = 'en-IN';
     
     if (userLanguage === 'ml') {
       // Try finding a Malayalam voice
@@ -283,18 +396,19 @@ export default function ChatPage() {
       }
       
       if (selectedVoice) {
-        utterance.voice = selectedVoice;
-        utterance.lang = selectedVoice.lang;
+        langToUse = selectedVoice.lang;
       } else {
-        // Fallback to Indian English for accent, but set target language to request browser engine
+        // If no Malayalam voice is installed, fallback to Indian English voice and transliterate!
         const enInVoice = availableVoices.find(
           v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
         );
         if (enInVoice) {
-          utterance.voice = enInVoice;
+          selectedVoice = enInVoice;
+          langToUse = enInVoice.lang;
+        } else {
+          langToUse = 'en-IN';
         }
-        utterance.lang = 'ml-IN';
-        console.warn("Malayalam voice not installed/found. Falling back to browser default.");
+        textToSpeak = transliterateMalayalam(cleanText);
       }
     } else if (userLanguage === 'manglish') {
       // Manglish is Latin characters, read it using Indian English accent
@@ -302,10 +416,9 @@ export default function ChatPage() {
         v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
       );
       if (selectedVoice) {
-        utterance.voice = selectedVoice;
-        utterance.lang = selectedVoice.lang;
+        langToUse = selectedVoice.lang;
       } else {
-        utterance.lang = 'en-IN';
+        langToUse = 'en-IN';
       }
     } else {
       // English
@@ -313,14 +426,38 @@ export default function ChatPage() {
         v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
       );
       if (selectedVoice) {
-        utterance.voice = selectedVoice;
-        utterance.lang = selectedVoice.lang;
+        langToUse = selectedVoice.lang;
       } else {
-        utterance.lang = 'en-IN';
+        langToUse = 'en-IN';
       }
     }
     
+    const utterance = new SpeechSynthesisUtterance(textToSpeak);
+    utterance.rate = 1.0;
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    utterance.lang = langToUse;
+    
     window.speechSynthesis.speak(utterance);
+  };
+
+  const startNewChat = () => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    const newSessionId = `chat_${Date.now()}`;
+    localStorage.setItem('ai_chat_session_id', newSessionId);
+    setSessionId(newSessionId);
+    setMessages([
+      {
+        id: 'welcome',
+        sender: 'mentor',
+        text: "Hello! I am your personal CA Foundation AI mentor. Ask me anything about Accounting, Business Laws, Math/Stats, or Economics, and I will search your ICAI library to give you precise answers with citations. You can also click the Mic icon to speak to me!",
+        timestamp: new Date()
+      }
+    ]);
+    setActiveCitations([]);
   };
 
   const handleSend = async (e: React.FormEvent) => {
@@ -352,7 +489,7 @@ export default function ChatPage() {
         query,
         selectedSubject || undefined,
         undefined,
-        sessionIdRef.current
+        sessionId
       );
 
       const mentorMsg: Message = {
@@ -407,6 +544,16 @@ export default function ChatPage() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4">
+            {/* New Chat Button */}
+            <button
+              onClick={startNewChat}
+              className="flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-sm shadow-indigo-600/10"
+              title="Start a new chat session"
+            >
+              <PlusCircle className="h-4 w-4" />
+              <span className="hidden sm:inline">New Chat</span>
+            </button>
+
             {/* Voice toggle */}
             <button
               onClick={() => {

@@ -11,6 +11,13 @@ export const AIService = {
     return response.data;
   },
 
+  async getChatHistory(sessionId?: string) {
+    const response = await api.get('/api/ai/chat/history/', {
+      params: { session_id: sessionId }
+    });
+    return response.data;
+  },
+
   async teachConcept(topicId: number | string, sessionId: string, message?: string) {
     const response = await api.post('/api/ai/teach/teach_concept/', {
       topic: topicId,
