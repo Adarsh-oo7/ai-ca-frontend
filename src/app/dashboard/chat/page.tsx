@@ -381,56 +381,20 @@ export default function ChatPage() {
     const cleanText = text.replace(/\[Source \d+\]/g, '').replace(/[\*#_]/g, '');
     
     const availableVoices = voices.length > 0 ? voices : window.speechSynthesis.getVoices();
-    let selectedVoice = null;
     let textToSpeak = cleanText;
-    let langToUse = 'en-IN';
     
-    if (userLanguage === 'ml') {
-      // Try finding a Malayalam voice
-      selectedVoice = availableVoices.find(v => v.lang.toLowerCase().startsWith('ml'));
-      if (!selectedVoice) {
-        // Search by name
-        selectedVoice = availableVoices.find(
-          v => v.name.toLowerCase().includes('malayalam') || v.name.includes('മലയാളം')
-        );
-      }
-      
-      if (selectedVoice) {
-        langToUse = selectedVoice.lang;
-      } else {
-        // If no Malayalam voice is installed, fallback to Indian English voice and transliterate!
-        const enInVoice = availableVoices.find(
-          v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
-        );
-        if (enInVoice) {
-          selectedVoice = enInVoice;
-          langToUse = enInVoice.lang;
-        } else {
-          langToUse = 'en-IN';
-        }
-        textToSpeak = transliterateMalayalam(cleanText);
-      }
-    } else if (userLanguage === 'manglish') {
-      // Manglish is Latin characters, read it using Indian English accent
-      selectedVoice = availableVoices.find(
-        v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
-      );
-      if (selectedVoice) {
-        langToUse = selectedVoice.lang;
-      } else {
-        langToUse = 'en-IN';
-      }
-    } else {
-      // English
-      selectedVoice = availableVoices.find(
-        v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
-      );
-      if (selectedVoice) {
-        langToUse = selectedVoice.lang;
-      } else {
-        langToUse = 'en-IN';
-      }
+    // Check if the text contains Malayalam script characters. If so, transliterate to Latin script (Manglish)
+    const containsMalayalam = /[\u0D00-\u0D7F]/.test(cleanText);
+    if (containsMalayalam) {
+      textToSpeak = transliterateMalayalam(cleanText);
     }
+    
+    // Select Indian English voice for natural pronunciation of Manglish and English mix
+    const selectedVoice = availableVoices.find(
+      v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
+    );
+    
+    const langToUse = selectedVoice ? selectedVoice.lang : 'en-IN';
     
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
     utterance.rate = 1.0;
