@@ -15,5 +15,10 @@ export const AnalyticsService = {
 
     const response = await api.get(url);
     return response.data;
+  },
+
+  async getPreviousDayActivities() {
+    const response = await api.get('/api/analytics/dashboard-stats/previous-day/');
+    return response.data;
   }
 };
