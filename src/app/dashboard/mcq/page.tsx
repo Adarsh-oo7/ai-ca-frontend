@@ -221,10 +221,10 @@ export default function MCQPage() {
                           key={key}
                           className={`p-3.5 rounded-xl border text-xs font-semibold ${
                             isCorrect
-                              ? 'border-emerald-500 bg-emerald-500/10 text-white'
+                              ? 'border-emerald-500 bg-emerald-500/10 text-white light-theme:text-emerald-950 light-theme:bg-emerald-50 light-theme:border-emerald-300'
                               : isSelected
-                              ? 'border-red-500 bg-red-500/10 text-white'
-                              : 'border-zinc-850 bg-zinc-950 text-zinc-400'
+                              ? 'border-red-500 bg-red-500/10 text-white light-theme:text-red-950 light-theme:bg-red-50 light-theme:border-red-300'
+                              : 'border-zinc-850 bg-zinc-950 text-zinc-400 light-theme:border-zinc-200 light-theme:bg-white light-theme:text-zinc-700'
                           }`}
                         >
                           <span className="mr-2 font-bold uppercase">{key}:</span>
@@ -281,8 +281,8 @@ export default function MCQPage() {
                         onClick={() => selectOption(activeQuestion.id, key)}
                         className={`w-full p-4 rounded-xl border text-left text-xs font-semibold transition-all cursor-pointer ${
                           isSelected
-                            ? 'border-indigo-500 bg-indigo-500/10 text-white'
-                            : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white hover:border-zinc-700'
+                            ? 'border-indigo-500 bg-indigo-500/10 text-white light-theme:text-indigo-950 light-theme:bg-indigo-50 light-theme:border-indigo-300'
+                            : 'border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white hover:border-zinc-700 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-700 light-theme:hover:text-indigo-650 light-theme:hover:border-indigo-300'
                         }`}
                       >
                         <span className="mr-3 font-bold uppercase">{key}:</span>
@@ -295,11 +295,11 @@ export default function MCQPage() {
             )}
 
             {/* Bottom Actions navigation */}
-            <div className="flex gap-4 pt-6 border-t border-zinc-800 justify-between">
+            <div className="flex gap-4 pt-6 border-t border-zinc-800 justify-between light-theme:border-zinc-200">
               <button
                 onClick={() => setActiveQuestionIdx(prev => Math.max(0, prev - 1))}
                 disabled={activeQuestionIdx === 0}
-                className="py-2.5 px-4 bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+                className="py-2.5 px-4 bg-zinc-850 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-650 light-theme:hover:text-indigo-600 light-theme:hover:bg-zinc-50"
               >
                 <ArrowLeft className="h-4 w-4" />
                 <span>Previous Question</span>
@@ -308,7 +308,7 @@ export default function MCQPage() {
               {activeQuestionIdx < activeQuestions.length - 1 ? (
                 <button
                   onClick={() => setActiveQuestionIdx(prev => prev + 1)}
-                  className="py-2.5 px-4 bg-zinc-850 hover:bg-zinc-855 border border-zinc-800 rounded-xl text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  className="py-2.5 px-4 bg-zinc-850 hover:bg-zinc-855 border border-zinc-800 rounded-xl text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-700 light-theme:hover:text-indigo-600 light-theme:hover:bg-zinc-50"
                 >
                   <span>Next Question</span>
                   <ArrowRight className="h-4 w-4" />
@@ -348,10 +348,10 @@ export default function MCQPage() {
                     onClick={() => setActiveQuestionIdx(idx)}
                     className={`h-10 w-10 rounded-lg text-xs font-black flex items-center justify-center border transition-all cursor-pointer ${
                       isActive
-                        ? 'border-indigo-500 bg-indigo-500/10 text-white'
+                        ? 'border-indigo-500 bg-indigo-500/10 text-white light-theme:text-indigo-950 light-theme:bg-indigo-50 light-theme:border-indigo-300'
                         : isSelected
-                        ? 'border-zinc-700 bg-zinc-800 text-zinc-300'
-                        : 'border-zinc-800 bg-zinc-950 text-zinc-500 hover:text-white'
+                        ? 'border-zinc-700 bg-zinc-800 text-zinc-300 light-theme:border-zinc-300 light-theme:bg-zinc-200 light-theme:text-zinc-800'
+                        : 'border-zinc-800 bg-zinc-950 text-zinc-500 hover:text-white light-theme:border-zinc-200 light-theme:bg-white light-theme:text-zinc-400 light-theme:hover:text-indigo-650'
                     }`}
                   >
                     {idx + 1}
@@ -379,7 +379,7 @@ export default function MCQPage() {
               <select
                 value={selectedSubject}
                 onChange={(e) => handleSubjectChange(e.target.value)}
-                className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500"
+                className="w-full px-4 py-2.5 bg-zinc-955 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-900"
               >
                 <option value="">Select Subject</option>
                 {subjects.map((sub) => (
@@ -399,7 +399,7 @@ export default function MCQPage() {
                 value={selectedChapter}
                 onChange={(e) => handleChapterChange(e.target.value)}
                 disabled={!selectedSubject}
-                className="w-full px-4 py-2.5 bg-zinc-955 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 disabled:opacity-50 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-900"
               >
                 <option value="">Select Chapter</option>
                 {chapters.map((chap) => (
@@ -419,7 +419,7 @@ export default function MCQPage() {
                 value={selectedTopic}
                 onChange={(e) => setSelectedTopic(e.target.value)}
                 disabled={!selectedChapter}
-                className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+                className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 disabled:opacity-50 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-900"
               >
                 <option value="">Select Topic</option>
                 {topics.map((t) => (
@@ -439,7 +439,7 @@ export default function MCQPage() {
                 <select
                   value={difficulty}
                   onChange={(e) => setDifficulty(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-zinc-955 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500"
+                  className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-900"
                 >
                   <option value="easy">Easy</option>
                   <option value="medium">Medium</option>
@@ -454,7 +454,7 @@ export default function MCQPage() {
                 <select
                   value={count}
                   onChange={(e) => setCount(parseInt(e.target.value))}
-                  className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500"
+                  className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-lg text-white text-xs focus:outline-none focus:border-indigo-500 light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-900"
                 >
                   <option value="5">5 Questions</option>
                   <option value="10">10 Questions</option>
