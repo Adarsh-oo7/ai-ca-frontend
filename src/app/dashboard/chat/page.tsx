@@ -149,6 +149,7 @@ export default function ChatPage() {
   // Voice states
   const [isRecording, setIsRecording] = React.useState(false);
   const [voiceEnabled, setVoiceEnabled] = React.useState(true);
+  const [voices, setVoices] = React.useState<SpeechSynthesisVoice[]>([]);
   
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
   const sessionIdRef = React.useRef<string>(`chat_${Date.now()}`);
@@ -161,6 +162,24 @@ export default function ChatPage() {
   React.useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Load and keep track of speech synthesis voices asynchronously
+  React.useEffect(() => {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      const updateVoices = () => {
+        setVoices(window.speechSynthesis.getVoices());
+      };
+      
+      updateVoices();
+      window.speechSynthesis.onvoiceschanged = updateVoices;
+      
+      return () => {
+        if (window.speechSynthesis) {
+          window.speechSynthesis.onvoiceschanged = null;
+        }
+      };
+    }
+  }, []);
 
   React.useEffect(() => {
     async function loadSubjects() {
@@ -194,7 +213,20 @@ export default function ChatPage() {
 
         recognition.onstart = () => setIsRecording(true);
         recognition.onend = () => setIsRecording(false);
-        recognition.onerror = () => setIsRecording(false);
+        
+        recognition.onerror = (event: any) => {
+          console.error('Speech recognition error:', event.error);
+          setIsRecording(false);
+          
+          if (event.error === 'not-allowed') {
+            alert("Microphone access is blocked. Please enable microphone permission in your browser settings to talk to the AI mentor.");
+          } else if (event.error === 'no-speech') {
+            alert("No speech was detected. Please try speaking again.");
+          } else if (event.error === 'network') {
+            alert("A network error occurred. Please check your internet connection.");
+          }
+        };
+
         recognition.onresult = (event: any) => {
           const text = event.results[0][0].transcript;
           setInput(text);
@@ -218,7 +250,11 @@ export default function ChatPage() {
       } else {
         recognitionRef.current.lang = 'en-IN';
       }
-      recognitionRef.current.start();
+      try {
+        recognitionRef.current.start();
+      } catch (err) {
+        console.error("Speech recognition start failed:", err);
+      }
     }
   };
 
@@ -233,19 +269,55 @@ export default function ChatPage() {
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.rate = 1.0;
     
-    const voices = window.speechSynthesis.getVoices();
+    const availableVoices = voices.length > 0 ? voices : window.speechSynthesis.getVoices();
     let selectedVoice = null;
     
     if (userLanguage === 'ml') {
-      selectedVoice = voices.find(v => v.lang.toLowerCase().startsWith('ml'));
+      // Try finding a Malayalam voice
+      selectedVoice = availableVoices.find(v => v.lang.toLowerCase().startsWith('ml'));
+      if (!selectedVoice) {
+        // Search by name
+        selectedVoice = availableVoices.find(
+          v => v.name.toLowerCase().includes('malayalam') || v.name.includes('മലയാളം')
+        );
+      }
+      
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        utterance.lang = selectedVoice.lang;
+      } else {
+        // Fallback to Indian English for accent, but set target language to request browser engine
+        const enInVoice = availableVoices.find(
+          v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
+        );
+        if (enInVoice) {
+          utterance.voice = enInVoice;
+        }
+        utterance.lang = 'ml-IN';
+        console.warn("Malayalam voice not installed/found. Falling back to browser default.");
+      }
     } else if (userLanguage === 'manglish') {
-      selectedVoice = voices.find(v => v.lang.toLowerCase() === 'en-in');
+      // Manglish is Latin characters, read it using Indian English accent
+      selectedVoice = availableVoices.find(
+        v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
+      );
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        utterance.lang = selectedVoice.lang;
+      } else {
+        utterance.lang = 'en-IN';
+      }
     } else {
-      selectedVoice = voices.find(v => v.lang.toLowerCase() === 'en-in');
-    }
-    
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
+      // English
+      selectedVoice = availableVoices.find(
+        v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
+      );
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        utterance.lang = selectedVoice.lang;
+      } else {
+        utterance.lang = 'en-IN';
+      }
     }
     
     window.speechSynthesis.speak(utterance);
