@@ -174,60 +174,7 @@ const renderFormattedText = (text: string) => {
   return <div className="space-y-1.5">{elements}</div>;
 };
 
-const transliterateMalayalam = (text: string): string => {
-  const consonants: { [key: string]: string } = {
-    'ക': 'k', 'ഖ': 'kh', 'ഗ': 'g', 'ഘ': 'gh', 'ങ': 'ng',
-    'ച': 'ch', 'ഛ': 'chh', 'ജ': 'j', 'ഝ': 'jh', 'ഞ': 'ny',
-    'ട': 't', 'ഠ': 'th', 'ഡ': 'd', 'ഢ': 'dh', 'ണ': 'n',
-    'ത': 'th', 'ഥ': 'thh', 'ദ': 'd', 'ധ': 'dh', 'ന': 'n',
-    'പ': 'p', 'ഫ': 'ph', 'ബ': 'b', 'ഭ': 'bh', 'മ': 'm',
-    'യ': 'y', 'ര': 'r', 'ല': 'l', 'വ': 'v', 'ശ': 'sh', 'ഷ': 'sh', 'സ': 's', 'ഹ': 'h',
-    'ള': 'l', 'ഴ': 'zh', 'റ': 'r', 'റ്റ': 'tt'
-  };
 
-  const vowels: { [key: string]: string } = {
-    'അ': 'a', 'ആ': 'aa', 'ഇ': 'i', 'ഈ': 'ee', 'ഉ': 'u', 'ഊ': 'oo', 'ഋ': 'ri',
-    'എ': 'e', 'ഏ': 'ae', 'ഐ': 'ai', 'ഒ': 'o', 'ഓ': 'oa', 'ഔ': 'au'
-  };
-
-  const vowelSigns: { [key: string]: string } = {
-    'ാ': 'aa', 'ി': 'i', 'ീ': 'ee', 'ു': 'u', 'ൂ': 'oo', 'ൃ': 'ri',
-    'െ': 'e', 'േ': 'ae', 'ൈ': 'ai', 'ൊ': 'o', 'ോ': 'oa', 'ൌ': 'au'
-  };
-
-  const otherSigns: { [key: string]: string } = {
-    'ൽ': 'l', 'ൻ': 'n', 'ർ': 'r', 'ൾ': 'l', 'ൺ': 'n', 'ം': 'm', 'ഃ': 'h'
-  };
-
-  let result = '';
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    
-    if (consonants[char] !== undefined) {
-      const nextChar = text[i + 1];
-      if (nextChar && vowelSigns[nextChar] !== undefined) {
-        result += consonants[char] + vowelSigns[nextChar];
-        i++; // skip next char
-      } else if (nextChar === '്') {
-        result += consonants[char];
-        i++; // skip virama
-      } else {
-        result += consonants[char] + 'a';
-      }
-    } else if (vowels[char] !== undefined) {
-      result += vowels[char];
-    } else if (otherSigns[char] !== undefined) {
-      result += otherSigns[char];
-    } else if (vowelSigns[char] !== undefined) {
-      result += vowelSigns[char];
-    } else if (char === '്') {
-      result += 'u';
-    } else {
-      result += char;
-    }
-  }
-  return result;
-};
 
 const generateUniqueId = (prefix: string) => {
   return `${prefix}_${new Date().getTime()}_${Math.floor(Math.random() * 1000000)}`;
@@ -268,6 +215,279 @@ export default function ChatPage() {
   const speechQueueRef = React.useRef<SpeechSynthesisUtterance[]>([]);
   const isSpeakingRef = React.useRef(false);
   const submitVoiceQueryRef = React.useRef<((queryText: string) => Promise<void>) | null>(null);
+
+  const sessionIdRef = React.useRef(sessionId);
+  const selectedSubjectRef = React.useRef(selectedSubject);
+  const activeAudioRef = React.useRef<HTMLAudioElement | null>(null);
+
+  React.useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  React.useEffect(() => {
+    selectedSubjectRef.current = selectedSubject;
+  }, [selectedSubject]);
+
+  // Live Voice Call States
+  const [isLiveCallActive, setIsLiveCallActive] = React.useState(false);
+  const [isLiveCallConnected, setIsLiveCallConnected] = React.useState(false);
+  const [isLiveCallMuted, setIsLiveCallMuted] = React.useState(false);
+  const [liveCallStatus, setLiveCallStatus] = React.useState('Connecting...');
+
+  // Live Voice Call Refs
+  const liveWsRef = React.useRef<WebSocket | null>(null);
+  const liveAudioCtxRef = React.useRef<AudioContext | null>(null);
+  const liveMediaStreamRef = React.useRef<MediaStream | null>(null);
+  const liveProcessorRef = React.useRef<ScriptProcessorNode | null>(null);
+  const liveSourcesRef = React.useRef<AudioBufferSourceNode[]>([]);
+  const liveNextPlayTimeRef = React.useRef<number>(0);
+
+  // Helper: Convert ArrayBuffer to Base64
+  const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return window.btoa(binary);
+  };
+
+  // Helper: Stop active playbacks
+  const stopLiveAudioPlayback = () => {
+    liveSourcesRef.current.forEach(source => {
+      try {
+        source.stop();
+      } catch {}
+    });
+    liveSourcesRef.current = [];
+    if (liveAudioCtxRef.current) {
+      liveNextPlayTimeRef.current = liveAudioCtxRef.current.currentTime;
+    }
+  };
+
+  // Helper: Clean up resources
+  const cleanupLiveCall = () => {
+    stopLiveAudioPlayback();
+    
+    if (liveProcessorRef.current) {
+      try { liveProcessorRef.current.disconnect(); } catch {}
+      liveProcessorRef.current = null;
+    }
+    
+    if (liveMediaStreamRef.current) {
+      liveMediaStreamRef.current.getTracks().forEach(track => track.stop());
+      liveMediaStreamRef.current = null;
+    }
+    
+    if (liveAudioCtxRef.current) {
+      try { liveAudioCtxRef.current.close(); } catch {}
+      liveAudioCtxRef.current = null;
+    }
+    
+    if (liveWsRef.current) {
+      try { liveWsRef.current.close(); } catch {}
+      liveWsRef.current = null;
+    }
+    
+    setIsLiveCallConnected(false);
+  };
+
+  const endLiveCall = () => {
+    cleanupLiveCall();
+    setIsLiveCallActive(false);
+  };
+
+  // Helper: Schedule PCM chunk playback
+  const playLivePCMChunk = (base64Data: string) => {
+    if (!liveAudioCtxRef.current) return;
+    const audioCtx = liveAudioCtxRef.current;
+    
+    const binaryString = window.atob(base64Data);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    const int16Data = new Int16Array(bytes.buffer);
+    
+    const float32Data = new Float32Array(int16Data.length);
+    for (let i = 0; i < int16Data.length; i++) {
+      float32Data[i] = int16Data[i] / 32768.0;
+    }
+    
+    const audioBuffer = audioCtx.createBuffer(1, float32Data.length, 24000);
+    audioBuffer.copyToChannel(float32Data, 0);
+    
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(audioCtx.destination);
+    
+    source.onended = () => {
+      liveSourcesRef.current = liveSourcesRef.current.filter(s => s !== source);
+    };
+    liveSourcesRef.current.push(source);
+    
+    const now = audioCtx.currentTime;
+    if (liveNextPlayTimeRef.current < now) {
+      liveNextPlayTimeRef.current = now + 0.05;
+    }
+    source.start(liveNextPlayTimeRef.current);
+    liveNextPlayTimeRef.current += audioBuffer.duration;
+  };
+
+  // Helper: Initialize audio recording
+  const initAudioRecording = (stream: MediaStream) => {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    const audioCtx = new AudioContextClass({ sampleRate: 16000 });
+    liveAudioCtxRef.current = audioCtx;
+    liveNextPlayTimeRef.current = audioCtx.currentTime;
+
+    const source = audioCtx.createMediaStreamSource(stream);
+    const processor = audioCtx.createScriptProcessor(2048, 1, 1);
+    liveProcessorRef.current = processor;
+
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+
+    processor.onaudioprocess = (e) => {
+      if (isLiveCallMuted || !liveWsRef.current || liveWsRef.current.readyState !== WebSocket.OPEN) {
+        return;
+      }
+
+      const inputData = e.inputBuffer.getChannelData(0);
+      
+      const pcmBuffer = new Int16Array(inputData.length);
+      for (let i = 0; i < inputData.length; i++) {
+        const s = Math.max(-1, Math.min(1, inputData[i]));
+        pcmBuffer[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+
+      const base64Audio = arrayBufferToBase64(pcmBuffer.buffer);
+
+      try {
+        liveWsRef.current.send(JSON.stringify({
+          realtimeInput: {
+            mediaChunks: [
+              {
+                mimeType: 'audio/pcm;rate=16000',
+                data: base64Audio
+              }
+            ]
+          }
+        }));
+      } catch (err) {
+        console.error('Error sending audio chunk:', err);
+      }
+    };
+  };
+
+  // Main: Start the Live Voice Call session
+  const startLiveCall = async () => {
+    setIsLiveCallActive(true);
+    setLiveCallStatus('Requesting access key...');
+    
+    try {
+      const apiKey = await AIService.getApiKey();
+      
+      setLiveCallStatus('Requesting microphone permission...');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      });
+      liveMediaStreamRef.current = stream;
+
+      setLiveCallStatus('Connecting to Gemini Live...');
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+      const ws = new WebSocket(wsUrl);
+      liveWsRef.current = ws;
+
+      ws.onopen = () => {
+        setIsLiveCallConnected(true);
+        setLiveCallStatus('Initializing session...');
+        
+        const setupMessage = {
+          setup: {
+            model: 'models/gemini-2.0-flash-exp',
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: 'Charon'
+                  }
+                }
+              }
+            }
+          }
+        };
+        ws.send(JSON.stringify(setupMessage));
+        
+        initAudioRecording(stream);
+        setLiveCallStatus('Connected — Start speaking!');
+      };
+
+      ws.onmessage = async (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          
+          if (message.serverContent) {
+            const { modelTurn, turnComplete, interrupted } = message.serverContent;
+            
+            if (interrupted) {
+              stopLiveAudioPlayback();
+              setLiveCallStatus('Listening...');
+              return;
+            }
+            
+            if (modelTurn && modelTurn.parts) {
+              setLiveCallStatus('Speaking...');
+              for (const part of modelTurn.parts) {
+                if (part.inlineData && part.inlineData.data) {
+                  playLivePCMChunk(part.inlineData.data);
+                }
+              }
+            }
+            
+            if (turnComplete) {
+              setTimeout(() => {
+                setLiveCallStatus('Listening...');
+              }, 100);
+            }
+          }
+        } catch (e) {
+          console.error('Error parsing live WS message:', e);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('Gemini Live WS Error:', err);
+        setLiveCallStatus('Connection error.');
+      };
+
+      ws.onclose = () => {
+        setIsLiveCallConnected(false);
+        setLiveCallStatus('Connection closed.');
+        cleanupLiveCall();
+      };
+      
+    } catch (err) {
+      console.error('Failed to start Live Call:', err);
+      alert('Failed to connect to Live Voice Agent. Please ensure microphone access is granted and Gemini API is configured.');
+      setIsLiveCallActive(false);
+    }
+  };
+
+  // Clean up on component unmount
+  React.useEffect(() => {
+    return () => {
+      cleanupLiveCall();
+    };
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -435,16 +655,19 @@ export default function ChatPage() {
           const text = event.results[0][0].transcript;
           if (!text.trim()) return;
           
-          const containsMalayalam = /[\u0D00-\u0D7F]/.test(text);
-          const processedText = containsMalayalam ? transliterateMalayalam(text) : text;
-          
-          setInput(processedText);
-          await submitVoiceQueryRef.current?.(processedText);
+          setInput(text);
+          await submitVoiceQueryRef.current?.(text);
         };
         recognitionRef.current = recognition;
       }
     }
   }, []);
+
+  React.useEffect(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.lang = 'en-IN';
+    }
+  }, [userLanguage]);
 
   const toggleRecording = () => {
     if (!recognitionRef.current) {
@@ -454,12 +677,7 @@ export default function ChatPage() {
     if (isRecording) {
       recognitionRef.current.stop();
     } else {
-      // Set language dynamically based on user profile settings
-      if (userLanguage === 'ml' || userLanguage === 'manglish') {
-        recognitionRef.current.lang = 'ml-IN';
-      } else {
-        recognitionRef.current.lang = 'en-IN';
-      }
+      recognitionRef.current.lang = 'en-IN';
       try {
         recognitionRef.current.start();
       } catch (err) {
@@ -470,128 +688,56 @@ export default function ChatPage() {
 
   // ========== NATURAL SPEAKING ENGINE ==========
   const stopSpeaking = () => {
+    if (activeAudioRef.current) {
+      activeAudioRef.current.pause();
+      activeAudioRef.current = null;
+    }
     if (typeof window === 'undefined' || !window.speechSynthesis) return;
     window.speechSynthesis.cancel();
     speechQueueRef.current = [];
     isSpeakingRef.current = false;
   };
 
-  const speakText = (text: string) => {
-    if (!voiceEnabled || typeof window === 'undefined' || !window.speechSynthesis) return;
+  const isManglish = (t: string): boolean => {
+    const manglishPatterns = [
+      /\b(enthanu|enthu|evide|eppo|enna|alle|aano|undo|vere|njan|nee|avan|aval)\b/i,
+      /\b(parayoo|cheyyoo|ariyamo|ayyo|adipoli|sheriyano|okke|alle)\b/i,
+      /\b(ingane|angane|enganey|evidey|appol|athu|ithu|ethu)\b/i,
+    ];
+    return manglishPatterns.some(p => p.test(t));
+  };
+
+  const speakText = async (text: string) => {
+    if (!voiceEnabled || typeof window === 'undefined') return;
     
-    // Stop any active speech
     stopSpeaking();
-    
-    // Clean text of markdown blocks, citations, and formatting
-    let cleanText = text
-      .replace(/\[Source \d+\]/g, '')         // Remove citation markers
-      .replace(/\*\*(.*?)\*\*/g, '$1')        // Remove bold markers, keep text
-      .replace(/#{1,6}\s*/g, '')              // Remove heading markers
-      .replace(/[\*_~`]/g, '')                // Remove markdown formatting chars
-      .replace(/\n{3,}/g, '\n\n')            // Collapse excessive newlines
-      .replace(/^\s*[-\*]\s+/gm, '')          // Remove bullet markers
-      .replace(/^\s*\d+\.\s+/gm, '')          // Remove numbered list markers
+
+    const cleanText = text
+      .replace(/\[Source \d+\]/g, '')
+      .replace(/#{1,6}\s*/g, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/`{1,3}([\s\S]*?)`{1,3}/g, '$1')
+      .replace(/^\s*[-*+]\s+/gm, '')
+      .replace(/^\s*\d+\.\s+/gm, '')
+      .replace(/_/g, '')
+      .replace(/\n{2,}/g, '. ')
+      .replace(/\n/g, ' ')
       .trim();
-    
+
     if (!cleanText) return;
 
-    const availableVoices = voices.length > 0 ? voices : window.speechSynthesis.getVoices();
-    
-    // Find best voice
-    let selectedVoice: SpeechSynthesisVoice | null = null;
-    let langToUse = 'en-IN';
-    
-    const containsMalayalam = /[\u0D00-\u0D7F]/.test(cleanText);
-    
-    if (containsMalayalam) {
-      // Transliterate Malayalam to Manglish for English TTS
-      cleanText = transliterateMalayalam(cleanText);
+    const voiceName = isManglish(cleanText) ? "Aoede" : "Charon";
+
+    try {
+      const audioBlob = await AIService.speak(cleanText, voiceName);
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      activeAudioRef.current = audio;
+      audio.play();
+    } catch (err) {
+      console.error("Failed to generate voice output:", err);
     }
-    
-    // Find en-IN voice (best for Indian English / Manglish pronunciation)
-    const enInVoice = availableVoices.find(
-      v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
-    );
-    selectedVoice = enInVoice || availableVoices.find(v => v.lang.startsWith('en')) || null;
-    langToUse = selectedVoice ? selectedVoice.lang : 'en-IN';
-
-    // Split text into natural sentence chunks for smooth delivery
-    // Split on sentence endings, but keep the punctuation
-    const paragraphs = cleanText.split(/\n\n+/);
-    const allChunks: { text: string; pauseAfter: number }[] = [];
-
-    for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
-      const para = paragraphs[pIdx].trim();
-      if (!para) continue;
-
-      // Split paragraph into sentences
-      const sentences = para.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [para];
-      
-      for (let sIdx = 0; sIdx < sentences.length; sIdx++) {
-        const sentence = sentences[sIdx].trim();
-        if (!sentence || sentence.length < 2) continue;
-
-        // Break very long sentences into smaller chunks (at commas or semicolons)
-        if (sentence.length > 150) {
-          const subChunks = sentence.split(/[,;]\s+/);
-          subChunks.forEach((chunk, cIdx) => {
-            if (chunk.trim()) {
-              allChunks.push({
-                text: chunk.trim(),
-                pauseAfter: cIdx < subChunks.length - 1 ? 200 : 350
-              });
-            }
-          });
-        } else {
-          allChunks.push({
-            text: sentence,
-            pauseAfter: 350  // Natural pause between sentences
-          });
-        }
-      }
-
-      // Add longer pause between paragraphs
-      if (pIdx < paragraphs.length - 1 && allChunks.length > 0) {
-        allChunks[allChunks.length - 1].pauseAfter = 600;
-      }
-    }
-
-    if (allChunks.length === 0) return;
-
-    isSpeakingRef.current = true;
-
-    // Speak chunks sequentially with natural pauses
-    const speakNextChunk = (index: number) => {
-      if (index >= allChunks.length || !isSpeakingRef.current) {
-        isSpeakingRef.current = false;
-        return;
-      }
-
-      const chunk = allChunks[index];
-      const utterance = new SpeechSynthesisUtterance(chunk.text);
-      utterance.rate = 0.92;  // Slightly slower for clarity - teacher pace
-      utterance.pitch = 1.05; // Slightly warmer tone
-      utterance.volume = 1.0;
-      if (selectedVoice) {
-        utterance.voice = selectedVoice;
-      }
-      utterance.lang = langToUse;
-
-      utterance.onend = () => {
-        // Pause between chunks, then speak next
-        setTimeout(() => {
-          speakNextChunk(index + 1);
-        }, chunk.pauseAfter);
-      };
-
-      utterance.onerror = () => {
-        isSpeakingRef.current = false;
-      };
-
-      window.speechSynthesis.speak(utterance);
-    };
-
-    speakNextChunk(0);
   };
 
   // ========== SESSION MANAGEMENT ==========
@@ -659,9 +805,9 @@ export default function ChatPage() {
     try {
       const response = await AIService.sendMessage(
         queryText,
-        selectedSubject || undefined,
+        selectedSubjectRef.current || undefined,
         undefined,
-        sessionId
+        sessionIdRef.current
       );
 
       const mentorMsg: Message = {
@@ -849,6 +995,16 @@ export default function ChatPage() {
             >
               <PlusCircle className="h-4 w-4" />
               <span className="hidden sm:inline">New Chat</span>
+            </button>
+
+            {/* Live Call Button */}
+            <button
+              onClick={startLiveCall}
+              className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-sm shadow-emerald-600/10"
+              title="Start real-time voice call (Gemini Live)"
+            >
+              <Mic className="h-4 w-4" />
+              <span>Live Talk</span>
             </button>
 
             {/* Voice toggle */}
@@ -1051,6 +1207,56 @@ export default function ChatPage() {
           )}
         </div>
       </div>
+
+      {isLiveCallActive && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 backdrop-blur-md p-6 animate-fade-in">
+          <div className="bg-zinc-900/60 border border-zinc-800 rounded-3xl p-8 max-w-md w-full flex flex-col items-center justify-center text-center shadow-2xl relative light-theme:bg-white light-theme:border-zinc-200">
+            {/* Top Indicator */}
+            <div className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-full text-emerald-400 text-[10px] font-bold">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+              <span>LIVE</span>
+            </div>
+
+            {/* Avatar or pulsing wave */}
+            <div className="relative my-10 flex items-center justify-center">
+              <div className={`absolute h-32 w-32 rounded-full bg-indigo-500/10 border border-indigo-500/20 transition-all duration-1000 ${liveCallStatus.includes('Speaking') ? 'scale-125 opacity-100 animate-pulse' : 'scale-100 opacity-50'}`} />
+              <div className={`absolute h-24 w-24 rounded-full bg-indigo-500/20 border border-indigo-500/30 transition-all duration-1000 ${liveCallStatus.includes('Listening') ? 'scale-110 opacity-100 animate-pulse' : 'scale-90 opacity-70'}`} />
+              
+              <div className="h-16 w-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white flex-shrink-0 relative shadow-lg shadow-indigo-600/30">
+                <Sparkles className={`h-8 w-8 ${liveCallStatus.includes('Speaking') ? 'animate-bounce' : 'animate-pulse'}`} />
+              </div>
+            </div>
+
+            <h3 className="text-lg font-bold text-white mb-1 light-theme:text-zinc-900">Study Commander Voice</h3>
+            <p className="text-xs text-indigo-400 font-semibold mb-6 uppercase tracking-wider">{liveCallStatus}</p>
+
+            {/* Controls */}
+            <div className="flex items-center gap-6">
+              {/* Mute Button */}
+              <button
+                onClick={() => setIsLiveCallMuted(!isLiveCallMuted)}
+                className={`p-4 rounded-full border transition-all cursor-pointer ${
+                  isLiveCallMuted
+                    ? 'bg-red-500/20 border-red-500 text-red-500 hover:bg-red-500/30'
+                    : 'bg-zinc-800 border-zinc-700 text-zinc-300 hover:bg-zinc-700 hover:text-white light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-700 light-theme:hover:bg-zinc-200'
+                }`}
+                title={isLiveCallMuted ? 'Unmute microphone' : 'Mute microphone'}
+              >
+                {isLiveCallMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+              </button>
+
+              {/* End Button */}
+              <button
+                onClick={endLiveCall}
+                className="p-4 bg-red-600 hover:bg-red-500 text-white rounded-full transition-all shadow-lg shadow-red-600/30 cursor-pointer"
+                title="End voice call"
+              >
+                <PlusCircle className="h-5 w-5 rotate-45 text-white" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

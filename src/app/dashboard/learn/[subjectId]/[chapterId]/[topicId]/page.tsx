@@ -130,60 +130,7 @@ const renderFormattedText = (text: string) => {
   return <div className="space-y-1.5">{elements}</div>;
 };
 
-const transliterateMalayalam = (text: string): string => {
-  const consonants: { [key: string]: string } = {
-    'ക': 'k', 'ഖ': 'kh', 'ഗ': 'g', 'ഘ': 'gh', 'ങ': 'ng',
-    'ച': 'ch', 'ഛ': 'chh', 'ജ': 'j', 'ഝ': 'jh', 'ഞ': 'ny',
-    'ട': 't', 'ഠ': 'th', 'ഡ': 'd', 'ഢ': 'dh', 'ണ': 'n',
-    'ത': 'th', 'ഥ': 'thh', 'ദ': 'd', 'ധ': 'dh', 'ന': 'n',
-    'പ': 'p', 'ഫ': 'ph', 'ബ': 'b', 'ഭ': 'bh', 'മ': 'm',
-    'യ': 'y', 'ര': 'r', 'ല': 'l', 'വ': 'v', 'ശ': 'sh', 'ഷ': 'sh', 'സ': 's', 'ഹ': 'h',
-    'ള': 'l', 'ഴ': 'zh', 'റ': 'r', 'റ്റ': 'tt'
-  };
 
-  const vowels: { [key: string]: string } = {
-    'അ': 'a', 'ആ': 'aa', 'ഇ': 'i', 'ഈ': 'ee', 'ഉ': 'u', 'ഊ': 'oo', 'ഋ': 'ri',
-    'എ': 'e', 'ഏ': 'ae', 'ഐ': 'ai', 'ഒ': 'o', 'ഓ': 'oa', 'ഔ': 'au'
-  };
-
-  const vowelSigns: { [key: string]: string } = {
-    'ാ': 'aa', 'ി': 'i', 'ീ': 'ee', 'ു': 'u', 'ൂ': 'oo', 'ൃ': 'ri',
-    'െ': 'e', 'േ': 'ae', 'ൈ': 'ai', 'ൊ': 'o', 'ോ': 'oa', 'ൌ': 'au'
-  };
-
-  const otherSigns: { [key: string]: string } = {
-    'ൽ': 'l', 'ൻ': 'n', 'ർ': 'r', 'ൾ': 'l', 'ൺ': 'n', 'ം': 'm', 'ഃ': 'h'
-  };
-
-  let result = '';
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    
-    if (consonants[char] !== undefined) {
-      const nextChar = text[i + 1];
-      if (nextChar && vowelSigns[nextChar] !== undefined) {
-        result += consonants[char] + vowelSigns[nextChar];
-        i++; // skip next char
-      } else if (nextChar === '്') {
-        result += consonants[char];
-        i++; // skip virama
-      } else {
-        result += consonants[char] + 'a';
-      }
-    } else if (vowels[char] !== undefined) {
-      result += vowels[char];
-    } else if (otherSigns[char] !== undefined) {
-      result += otherSigns[char];
-    } else if (vowelSigns[char] !== undefined) {
-      result += vowelSigns[char];
-    } else if (char === '്') {
-      result += 'u';
-    } else {
-      result += char;
-    }
-  }
-  return result;
-};
 
 export default function AITeacherPage() {
   const params = useParams();
@@ -211,6 +158,7 @@ export default function AITeacherPage() {
   const sessionIdRef = React.useRef<string>(`teach_${topicId}_${Date.now()}`);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const recognitionRef = React.useRef<any>(null);
+  const activeAudioRef = React.useRef<HTMLAudioElement | null>(null);
 
   const scrollToBottom = () => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -278,11 +226,8 @@ export default function AITeacherPage() {
           const text = event.results[0][0].transcript;
           if (!text.trim()) return;
           
-          const containsMalayalam = /[\u0D00-\u0D7F]/.test(text);
-          const processedText = containsMalayalam ? transliterateMalayalam(text) : text;
-          
-          setInput(processedText);
-          await submitVoiceQuery(processedText);
+          setInput(text);
+          await submitVoiceQuery(text);
         };
         recognitionRef.current = recognition;
       }
@@ -297,12 +242,7 @@ export default function AITeacherPage() {
     if (isRecording) {
       recognitionRef.current.stop();
     } else {
-      // Set language dynamically based on user profile settings
-      if (userLanguage === 'ml' || userLanguage === 'manglish') {
-        recognitionRef.current.lang = 'ml-IN';
-      } else {
-        recognitionRef.current.lang = 'en-IN';
-      }
+      recognitionRef.current.lang = 'en-IN';
       try {
         recognitionRef.current.start();
       } catch (err) {
@@ -311,60 +251,56 @@ export default function AITeacherPage() {
     }
   };
 
-  const speakText = (text: string) => {
-    if (!voiceEnabled || typeof window === 'undefined' || !window.speechSynthesis) return;
-    
-    // Stop any active speech
-    window.speechSynthesis.cancel();
-    
-    // Clean text of markdown blocks or brackets
-    const cleanText = text.replace(/\[Source \d+\]/g, '').replace(/[\*#_]/g, '');
-    
-    const availableVoices = voices.length > 0 ? voices : window.speechSynthesis.getVoices();
-    let selectedVoice = null;
-    let textToSpeak = cleanText;
-    let langToUse = 'en-IN';
-    
-    // Find Malayalam voice if present
-    let mlVoice = availableVoices.find(v => v.lang.toLowerCase().startsWith('ml'));
-    if (!mlVoice) {
-      mlVoice = availableVoices.find(
-        v => v.name.toLowerCase().includes('malayalam') || v.name.includes('മലയാളം')
-      );
+  const stopSpeaking = () => {
+    if (activeAudioRef.current) {
+      activeAudioRef.current.pause();
+      activeAudioRef.current = null;
     }
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+  };
 
-    const containsMalayalam = /[\u0D00-\u0D7F]/.test(cleanText);
+  const isManglish = (t: string): boolean => {
+    const manglishPatterns = [
+      /\b(enthanu|enthu|evide|eppo|enna|alle|aano|undo|vere|njan|nee|avan|aval)\b/i,
+      /\b(parayoo|cheyyoo|ariyamo|ayyo|adipoli|sheriyano|okke|alle)\b/i,
+      /\b(ingane|angane|enganey|evidey|appol|athu|ithu|ethu)\b/i,
+    ];
+    return manglishPatterns.some(p => p.test(t));
+  };
+
+  const speakText = async (text: string) => {
+    if (!voiceEnabled || typeof window === 'undefined') return;
     
-    if (containsMalayalam && mlVoice) {
-      selectedVoice = mlVoice;
-      langToUse = mlVoice.lang;
-      textToSpeak = cleanText;
-    } else if (containsMalayalam && !mlVoice) {
-      // Fallback: transliterate to Manglish and use en-IN voice
-      const enInVoice = availableVoices.find(
-        v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
-      );
-      selectedVoice = enInVoice || null;
-      langToUse = selectedVoice ? selectedVoice.lang : 'en-IN';
-      textToSpeak = transliterateMalayalam(cleanText);
-    } else {
-      // English or Manglish text
-      const enInVoice = availableVoices.find(
-        v => v.lang.toLowerCase() === 'en-in' || v.lang.toLowerCase().replace('_', '-').startsWith('en-in')
-      );
-      selectedVoice = enInVoice || null;
-      langToUse = selectedVoice ? selectedVoice.lang : 'en-IN';
-      textToSpeak = cleanText;
+    stopSpeaking();
+    
+    const cleanText = text
+      .replace(/\[Source \d+\]/g, '')
+      .replace(/#{1,6}\s*/g, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/`{1,3}([\s\S]*?)`{1,3}/g, '$1')
+      .replace(/^\s*[-*+]\s+/gm, '')
+      .replace(/^\s*\d+\.\s+/gm, '')
+      .replace(/_/g, '')
+      .replace(/\n{2,}/g, '. ')
+      .replace(/\n/g, ' ')
+      .trim();
+
+    if (!cleanText) return;
+
+    const voiceName = isManglish(cleanText) ? "Aoede" : "Charon";
+
+    try {
+      const audioBlob = await AIService.speak(cleanText, voiceName);
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      activeAudioRef.current = audio;
+      audio.play();
+    } catch (err) {
+      console.error("Failed to generate voice output:", err);
     }
-    
-    const utterance = new SpeechSynthesisUtterance(textToSpeak);
-    utterance.rate = 1.0;
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
-    }
-    utterance.lang = langToUse;
-    
-    window.speechSynthesis.speak(utterance);
   };
 
   // Initial Load: Fetch topic and start teaching session
@@ -428,9 +364,7 @@ export default function AITeacherPage() {
     sendingRef.current = true;
 
     // Cancel speech on new query
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
+    stopSpeaking();
 
     // Add user response to chat
     setMessages(prev => [
@@ -524,9 +458,7 @@ export default function AITeacherPage() {
             <button
               onClick={() => {
                 setVoiceEnabled(!voiceEnabled);
-                if (typeof window !== 'undefined' && window.speechSynthesis) {
-                  window.speechSynthesis.cancel();
-                }
+                stopSpeaking();
               }}
               className="p-1.5 bg-zinc-950 border border-zinc-855 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg text-xs font-bold transition-colors cursor-pointer light-theme:bg-zinc-100 light-theme:border-zinc-200 light-theme:text-zinc-650 light-theme:hover:bg-zinc-200 light-theme:hover:text-zinc-900 animate-none"
               title={voiceEnabled ? 'Mute AI readback' : 'Enable AI readback'}

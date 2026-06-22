@@ -30,6 +30,21 @@ export const AIService = {
     return response.data;
   },
 
+  async speak(text: string, voiceName: string) {
+    const response = await api.post('/api/ai/chat/speak/', {
+      text,
+      voice_name: voiceName
+    }, {
+      responseType: 'blob'
+    });
+    return response.data;
+  },
+
+  async getApiKey() {
+    const response = await api.get('/api/ai/chat/get_api_key/');
+    return response.data.api_key;
+  },
+
   async teachConcept(topicId: number | string, sessionId: string, message?: string) {
     const response = await api.post('/api/ai/teach/teach_concept/', {
       topic: topicId,
