@@ -87,9 +87,7 @@ export default function Sidebar({ onClose, isMobile }: SidebarProps) {
       {/* Brand Header */}
       <div className="p-6 border-b border-zinc-800 light-theme:border-zinc-200">
         <Link href="/dashboard" onClick={onClose} className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-600 rounded-lg text-white">
-            <GraduationCap className="h-6 w-6" />
-          </div>
+          <img src="/logo.png" alt="Study Commander Logo" className="h-8 w-8 rounded-lg object-cover" />
           <span className="font-bold text-lg text-white light-theme:text-zinc-900 tracking-wide">
             STUDY COMMANDER
           </span>

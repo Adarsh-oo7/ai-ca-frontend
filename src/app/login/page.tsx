@@ -43,9 +43,7 @@ export default function LoginPage() {
         
         {/* Brand Header */}
         <div className="flex flex-col items-center mb-8">
-          <div className="p-4 bg-indigo-600 rounded-2xl text-white mb-4 shadow-lg shadow-indigo-600/20">
-            <GraduationCap className="h-8 w-8" />
-          </div>
+          <img src="/logo.png" alt="Study Commander Logo" className="h-16 w-16 rounded-2xl object-cover mb-4 shadow-lg shadow-indigo-600/20" />
           <h2 className="text-2xl font-black tracking-tight text-white mb-1">
             STUDY COMMANDER AI
           </h2>
