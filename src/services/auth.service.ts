@@ -9,6 +9,19 @@ export const AuthService = {
     return response.data;
   },
 
+  async sendOtp(email: string) {
+    const response = await api.post('/api/auth/login/send-otp/', { email });
+    return response.data;
+  },
+
+  async verifyOtp(email: string, otp: string, device: string = 'web') {
+    const response = await api.post('/api/auth/login/verify-otp/', { email, otp, device });
+    if (response.data.access) {
+      localStorage.setItem('access_token', response.data.access);
+    }
+    return response.data;
+  },
+
   async logout() {
     try {
       await api.post('/api/auth/logout/');
