@@ -475,12 +475,13 @@ export default function ChatPage() {
 
       ws.onerror = (err) => {
         console.error('Gemini Live WS Error:', err);
-        setLiveCallStatus('Connection error.');
+        setLiveCallStatus('Connection error. Check console.');
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        console.error('Gemini Live WS Close:', event.code, event.reason);
+        setLiveCallStatus(`Connection closed (Code: ${event.code}${event.reason ? `, Reason: ${event.reason}` : ''}).`);
         setIsLiveCallConnected(false);
-        setLiveCallStatus('Connection closed.');
         cleanupLiveCall();
       };
       
