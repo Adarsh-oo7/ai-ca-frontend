@@ -45,6 +45,14 @@ export const AIService = {
     return response.data.api_key;
   },
 
+  async getLiveConfig() {
+    const response = await api.get('/api/ai/chat/get_api_key/');
+    return {
+      apiKey: response.data.api_key,
+      systemInstruction: response.data.system_instruction
+    };
+  },
+
   async teachConcept(topicId: number | string, sessionId: string, message?: string) {
     const response = await api.post('/api/ai/teach/teach_concept/', {
       topic: topicId,

@@ -386,7 +386,7 @@ export default function ChatPage() {
     setLiveCallStatus('Requesting access key...');
     
     try {
-      const apiKey = await AIService.getApiKey();
+      const { apiKey, systemInstruction } = await AIService.getLiveConfig();
       
       setLiveCallStatus('Requesting microphone permission...');
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -420,7 +420,10 @@ export default function ChatPage() {
                   }
                 }
               }
-            }
+            },
+            systemInstruction: systemInstruction ? {
+              parts: [{ text: systemInstruction }]
+            } : undefined
           }
         };
         ws.send(JSON.stringify(setupMessage));
