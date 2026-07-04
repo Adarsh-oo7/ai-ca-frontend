@@ -433,7 +433,16 @@ export default function ChatPage() {
 
       ws.onmessage = async (event) => {
         try {
-          const message = JSON.parse(event.data);
+          let text = '';
+          if (typeof event.data === 'string') {
+            text = event.data;
+          } else if (event.data instanceof Blob) {
+            text = await event.data.text();
+          } else if (event.data instanceof ArrayBuffer) {
+            text = new TextDecoder().decode(event.data);
+          }
+
+          const message = JSON.parse(text);
           
           if (message.serverContent) {
             const { modelTurn, turnComplete, interrupted } = message.serverContent;
