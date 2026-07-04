@@ -368,12 +368,10 @@ export default function ChatPage() {
       try {
         liveWsRef.current.send(JSON.stringify({
           realtimeInput: {
-            mediaChunks: [
-              {
-                mimeType: 'audio/pcm;rate=16000',
-                data: base64Audio
-              }
-            ]
+            audio: {
+              mimeType: 'audio/pcm;rate=16000',
+              data: base64Audio
+            }
           }
         }));
       } catch (err) {
