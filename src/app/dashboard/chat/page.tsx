@@ -400,7 +400,7 @@ export default function ChatPage() {
       liveMediaStreamRef.current = stream;
 
       setLiveCallStatus('Connecting to Gemini Live...');
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${apiKey}`;
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(apiKey)}`;
       const ws = new WebSocket(wsUrl);
       liveWsRef.current = ws;
 
