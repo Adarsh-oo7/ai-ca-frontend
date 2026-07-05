@@ -400,7 +400,7 @@ export default function ChatPage() {
       liveMediaStreamRef.current = stream;
 
       setLiveCallStatus('Connecting to Gemini Live...');
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${apiKey}`;
       const ws = new WebSocket(wsUrl);
       liveWsRef.current = ws;
 
@@ -410,7 +410,7 @@ export default function ChatPage() {
         
         const setupMessage = {
           setup: {
-            model: 'models/gemini-3.1-flash-live-preview',
+            model: 'models/gemini-2.0-flash',
             generationConfig: {
               responseModalities: ['AUDIO'],
               speechConfig: {
