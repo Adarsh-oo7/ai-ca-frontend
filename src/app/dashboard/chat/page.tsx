@@ -410,7 +410,7 @@ export default function ChatPage() {
         
         const setupMessage = {
           setup: {
-            model: 'models/gemini-2.0-flash',
+            model: 'models/gemini-2.0-flash-exp',
             generationConfig: {
               responseModalities: ['AUDIO'],
               speechConfig: {
