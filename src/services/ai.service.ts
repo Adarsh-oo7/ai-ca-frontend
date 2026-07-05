@@ -45,8 +45,11 @@ export const AIService = {
     return response.data.api_key;
   },
 
-  async getLiveConfig() {
-    const response = await api.get('/api/ai/chat/get_api_key/');
+  async getLiveConfig(sessionId?: string | null) {
+    const url = sessionId
+      ? `/api/ai/chat/get_api_key/?session_id=${sessionId}`
+      : '/api/ai/chat/get_api_key/';
+    const response = await api.get(url);
     return {
       apiKey: response.data.api_key,
       systemInstruction: response.data.system_instruction
