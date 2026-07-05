@@ -330,7 +330,7 @@ export default function ChatPage() {
     
     const now = audioCtx.currentTime;
     if (liveNextPlayTimeRef.current < now) {
-      liveNextPlayTimeRef.current = now + 0.05;
+      liveNextPlayTimeRef.current = now + 0.01;
     }
     source.start(liveNextPlayTimeRef.current);
     liveNextPlayTimeRef.current += audioBuffer.duration;
@@ -344,7 +344,7 @@ export default function ChatPage() {
     liveNextPlayTimeRef.current = audioCtx.currentTime;
 
     const source = audioCtx.createMediaStreamSource(stream);
-    const processor = audioCtx.createScriptProcessor(2048, 1, 1);
+    const processor = audioCtx.createScriptProcessor(1024, 1, 1);
     liveProcessorRef.current = processor;
 
     source.connect(processor);
@@ -455,7 +455,7 @@ export default function ChatPage() {
               clientContent: {
                 turns: [{
                   role: 'user',
-                  parts: [{ text: `[SYSTEM: Start the session now. Greet the student with this opening: "${greeting}" — speak it naturally as your first words.]` }]
+                  parts: [{ text: `Hi Devika! (Devika, please greet the student by saying exactly: "${greeting}")` }]
                 }],
                 turnComplete: true
               }
@@ -695,7 +695,7 @@ export default function ChatPage() {
 
   React.useEffect(() => {
     if (recognitionRef.current) {
-      recognitionRef.current.lang = 'en-IN';
+      recognitionRef.current.lang = (userLanguage === 'ml' || userLanguage === 'manglish') ? 'ml-IN' : 'en-IN';
     }
   }, [userLanguage]);
 
@@ -707,7 +707,7 @@ export default function ChatPage() {
     if (isRecording) {
       recognitionRef.current.stop();
     } else {
-      recognitionRef.current.lang = 'en-IN';
+      recognitionRef.current.lang = (userLanguage === 'ml' || userLanguage === 'manglish') ? 'ml-IN' : 'en-IN';
       try {
         recognitionRef.current.start();
       } catch (err) {
