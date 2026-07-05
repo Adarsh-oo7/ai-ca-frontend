@@ -52,7 +52,9 @@ export const AIService = {
     const response = await api.get(url);
     return {
       apiKey: response.data.api_key,
-      systemInstruction: response.data.system_instruction
+      systemInstruction: response.data.system_instruction,
+      initialMessage: response.data.initial_message || null,
+      langCode: response.data.lang_code || 'en',
     };
   },
 

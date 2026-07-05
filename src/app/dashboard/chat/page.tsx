@@ -386,7 +386,7 @@ export default function ChatPage() {
     setLiveCallStatus('Requesting access key...');
     
     try {
-      const { apiKey, systemInstruction } = await AIService.getLiveConfig(sessionId || null);
+      const { apiKey, systemInstruction, initialMessage } = await AIService.getLiveConfig(sessionId || null);
       
       setLiveCallStatus('Requesting microphone permission...');
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -399,14 +399,14 @@ export default function ChatPage() {
       });
       liveMediaStreamRef.current = stream;
 
-      setLiveCallStatus('Connecting to Gemini Live...');
+      setLiveCallStatus('Connecting to Devika...');
       const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(apiKey)}`;
       const ws = new WebSocket(wsUrl);
       liveWsRef.current = ws;
 
       ws.onopen = () => {
         setIsLiveCallConnected(true);
-        setLiveCallStatus('Initializing session...');
+        setLiveCallStatus('Initializing Devika...');
         
         const setupMessage = {
           setup: {
@@ -427,9 +427,7 @@ export default function ChatPage() {
           }
         };
         ws.send(JSON.stringify(setupMessage));
-        
-        initAudioRecording(stream);
-        setLiveCallStatus('Connected — Start speaking!');
+        // NOTE: Do NOT start audio recording here — wait for setupComplete
       };
 
       ws.onmessage = async (event) => {
@@ -444,6 +442,26 @@ export default function ChatPage() {
           }
 
           const message = JSON.parse(text);
+
+          // ── Setup complete: start mic + trigger Devika's opening greeting ──
+          if (message.setupComplete !== undefined) {
+            // Now start audio recording — setup is confirmed
+            initAudioRecording(stream);
+            setLiveCallStatus('Devika is greeting you...');
+
+            // Send the context-aware opening line so Devika speaks first
+            const greeting = initialMessage || `Hey! I am Devika, your CA Foundation teacher. What shall we study today?`;
+            ws.send(JSON.stringify({
+              clientContent: {
+                turns: [{
+                  role: 'user',
+                  parts: [{ text: `[SYSTEM: Start the session now. Greet the student with this opening: "${greeting}" — speak it naturally as your first words.]` }]
+                }],
+                turnComplete: true
+              }
+            }));
+            return;
+          }
           
           if (message.serverContent) {
             const { modelTurn, turnComplete, interrupted } = message.serverContent;
@@ -455,7 +473,7 @@ export default function ChatPage() {
             }
             
             if (modelTurn && modelTurn.parts) {
-              setLiveCallStatus('Speaking...');
+              setLiveCallStatus('Devika is speaking...');
               for (const part of modelTurn.parts) {
                 if (part.inlineData && part.inlineData.data) {
                   playLivePCMChunk(part.inlineData.data);
@@ -492,6 +510,7 @@ export default function ChatPage() {
       setIsLiveCallActive(false);
     }
   };
+
 
   // Clean up on component unmount
   React.useEffect(() => {
