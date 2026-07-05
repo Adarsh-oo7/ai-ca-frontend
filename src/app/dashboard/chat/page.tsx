@@ -416,7 +416,7 @@ export default function ChatPage() {
               speechConfig: {
                 voiceConfig: {
                   prebuiltVoiceConfig: {
-                    voiceName: 'Charon'
+                    voiceName: 'Aoede'
                   }
                 }
               }
@@ -738,7 +738,7 @@ export default function ChatPage() {
 
     if (!cleanText) return;
 
-    const voiceName = isManglish(cleanText) ? "Aoede" : "Charon";
+    const voiceName = "Aoede";
 
     try {
       const audioBlob = await AIService.speak(cleanText, voiceName);

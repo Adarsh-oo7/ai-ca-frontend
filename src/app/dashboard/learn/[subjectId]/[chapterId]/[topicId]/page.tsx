@@ -290,7 +290,7 @@ export default function AITeacherPage() {
 
     if (!cleanText) return;
 
-    const voiceName = isManglish(cleanText) ? "Aoede" : "Charon";
+    const voiceName = "Aoede";
 
     try {
       const audioBlob = await AIService.speak(cleanText, voiceName);
