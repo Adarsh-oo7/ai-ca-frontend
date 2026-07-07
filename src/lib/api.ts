@@ -1,12 +1,19 @@
 import axios from 'axios';
 
-// In production, use the Vercel proxy path so the browser never
-// needs to resolve the backend domain directly (avoids DNS issues).
-// In development, call the backend directly via localhost.
-const isProduction = process.env.NODE_ENV === 'production';
-const API_BASE = isProduction
-  ? '/backend'
-  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000');
+/**
+ * API base URL strategy:
+ *
+ *  - All environments (dev + prod on Vercel) use `/backend` as the baseURL.
+ *    next.config.ts rewrites `/backend/:path*` → the real VPS backend URL.
+ *    This avoids CORS issues and keeps the backend URL off the client bundle.
+ *
+ *  - If NEXT_PUBLIC_API_URL is explicitly set to a full URL (e.g. for local
+ *    development without the Next.js dev server, or testing), use it directly.
+ */
+const NEXT_PUBLIC_URL = process.env.NEXT_PUBLIC_API_URL || '';
+const API_BASE = NEXT_PUBLIC_URL.startsWith('http')
+  ? NEXT_PUBLIC_URL   // direct URL — dev only, bypasses proxy
+  : '/backend';       // always proxy via Next.js rewrites (dev + Vercel)
 
 export const api = axios.create({
   baseURL: API_BASE,

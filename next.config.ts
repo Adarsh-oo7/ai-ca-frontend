@@ -1,26 +1,43 @@
 import type { NextConfig } from "next";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+/**
+ * BACKEND_API_URL — private server-side variable (NOT prefixed with NEXT_PUBLIC_).
+ * It is only read by next.config.ts at build/dev time on the server and is
+ * never sent to the browser bundle, so it is safe to store the full VPS URL.
+ *
+ * Set this in Vercel → Project Settings → Environment Variables:
+ *   BACKEND_API_URL = https://api-study.digitalproductsolutions.in
+ *
+ * For local dev it falls back to http://localhost:8000.
+ */
+const BACKEND_URL =
+  process.env.BACKEND_API_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  'http://localhost:8000';
 
 const nextConfig: NextConfig = {
   output: 'standalone',
-  // Ensure Next.js preserves trailing slashes to match Django's APPEND_SLASH behavior.
-  // Without this, Next.js strips the slash → Django redirects to add it back
-  // → the browser follows the redirect but loses the /backend/ proxy prefix → 404.
-  trailingSlash: true,
+
   async rewrites() {
     return [
-      // Primary proxy: /backend/* → backend API server
+      /**
+       * Primary proxy used by api.ts (baseURL='/backend' in production).
+       *   Browser sends:  /backend/api/analytics/...
+       *   Next.js proxies: https://api-study.digitalproductsolutions.in/api/analytics/...
+       */
       {
         source: '/backend/:path*',
         destination: `${BACKEND_URL}/:path*`,
       },
-      // Fallback: also proxy /api/* directly so Django redirect loops are caught
+      /**
+       * Safety fallback: any /api/* that somehow bypasses /backend also gets
+       * proxied — handles Django 301 redirect loops that strip the /backend/ prefix.
+       */
       {
         source: '/api/:path*',
         destination: `${BACKEND_URL}/api/:path*`,
       },
-      // Also proxy /admin/* and /accounts/* (Django admin & allauth)
+      // Django admin & allauth
       {
         source: '/admin/:path*',
         destination: `${BACKEND_URL}/admin/:path*`,
@@ -31,6 +48,7 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+
   async redirects() {
     return [
       {
