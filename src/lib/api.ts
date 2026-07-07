@@ -1,9 +1,15 @@
 import axios from 'axios';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// In production, use the Vercel proxy path so the browser never
+// needs to resolve the backend domain directly (avoids DNS issues).
+// In development, call the backend directly via localhost.
+const isProduction = process.env.NODE_ENV === 'production';
+const API_BASE = isProduction
+  ? '/backend'
+  : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000');
 
 export const api = axios.create({
-  baseURL: API_URL,
+  baseURL: API_BASE,
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
@@ -64,7 +70,7 @@ api.interceptors.response.use(
         // HTTP-only cookie automatically if credentials are enabled.
         // SimpleJWT refresh endpoint: /api/auth/token/refresh/
         const refreshResponse = await axios.post(
-          `${API_URL}/api/auth/token/refresh/`,
+          `${API_BASE}/api/auth/token/refresh/`,
           {},
           { withCredentials: true }
         );
