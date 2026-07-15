@@ -236,11 +236,15 @@ export default function ChatPage() {
 
   // Live Voice Call Refs
   const liveWsRef = React.useRef<WebSocket | null>(null);
-  const liveAudioCtxRef = React.useRef<AudioContext | null>(null);
+  // Separate contexts: input at 16 kHz (mic) and output at 24 kHz (Gemini PCM) to eliminate resampling lag
+  const liveInputAudioCtxRef = React.useRef<AudioContext | null>(null);
+  const liveOutputAudioCtxRef = React.useRef<AudioContext | null>(null);
   const liveMediaStreamRef = React.useRef<MediaStream | null>(null);
   const liveProcessorRef = React.useRef<ScriptProcessorNode | null>(null);
   const liveSourcesRef = React.useRef<AudioBufferSourceNode[]>([]);
   const liveNextPlayTimeRef = React.useRef<number>(0);
+  // Draft persistence
+  const draftSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Helper: Convert ArrayBuffer to Base64
   const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
@@ -261,8 +265,8 @@ export default function ChatPage() {
       } catch {}
     });
     liveSourcesRef.current = [];
-    if (liveAudioCtxRef.current) {
-      liveNextPlayTimeRef.current = liveAudioCtxRef.current.currentTime;
+    if (liveOutputAudioCtxRef.current) {
+      liveNextPlayTimeRef.current = liveOutputAudioCtxRef.current.currentTime;
     }
   };
 
@@ -280,9 +284,16 @@ export default function ChatPage() {
       liveMediaStreamRef.current = null;
     }
     
-    if (liveAudioCtxRef.current) {
-      try { liveAudioCtxRef.current.close(); } catch {}
-      liveAudioCtxRef.current = null;
+    // Close mic input context (16 kHz)
+    if (liveInputAudioCtxRef.current) {
+      try { liveInputAudioCtxRef.current.close(); } catch {}
+      liveInputAudioCtxRef.current = null;
+    }
+    
+    // Close PCM playback context (24 kHz)
+    if (liveOutputAudioCtxRef.current) {
+      try { liveOutputAudioCtxRef.current.close(); } catch {}
+      liveOutputAudioCtxRef.current = null;
     }
     
     if (liveWsRef.current) {
@@ -296,12 +307,22 @@ export default function ChatPage() {
   const endLiveCall = () => {
     cleanupLiveCall();
     setIsLiveCallActive(false);
+    // Bridge voice session end into the chat thread so context is visible
+    setMessages(prev => [
+      ...prev,
+      {
+        id: generateUniqueId('voice_end'),
+        sender: 'mentor' as const,
+        text: '📞 Voice session ended — feel free to continue the conversation here in chat.',
+        timestamp: new Date(),
+      }
+    ]);
   };
 
-  // Helper: Schedule PCM chunk playback
+  // Helper: Schedule PCM chunk playback — uses dedicated 24 kHz output context to avoid resampling lag
   const playLivePCMChunk = (base64Data: string) => {
-    if (!liveAudioCtxRef.current) return;
-    const audioCtx = liveAudioCtxRef.current;
+    if (!liveOutputAudioCtxRef.current) return;
+    const audioCtx = liveOutputAudioCtxRef.current;
     
     const binaryString = window.atob(base64Data);
     const len = binaryString.length;
@@ -336,19 +357,31 @@ export default function ChatPage() {
     liveNextPlayTimeRef.current += audioBuffer.duration;
   };
 
-  // Helper: Initialize audio recording
+  // Helper: Create the dedicated 24 kHz output AudioContext for Gemini PCM playback
+  const initOutputAudio = () => {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    const outputCtx = new AudioContextClass({ sampleRate: 24000 });
+    liveOutputAudioCtxRef.current = outputCtx;
+    liveNextPlayTimeRef.current = outputCtx.currentTime;
+  };
+
+  // Helper: Initialize mic recording at 16 kHz (input-only context, separate from playback)
   const initAudioRecording = (stream: MediaStream) => {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    const audioCtx = new AudioContextClass({ sampleRate: 16000 });
-    liveAudioCtxRef.current = audioCtx;
-    liveNextPlayTimeRef.current = audioCtx.currentTime;
+    const inputCtx = new AudioContextClass({ sampleRate: 16000 });
+    liveInputAudioCtxRef.current = inputCtx;
 
-    const source = audioCtx.createMediaStreamSource(stream);
-    const processor = audioCtx.createScriptProcessor(1024, 1, 1);
+    const source = inputCtx.createMediaStreamSource(stream);
+    // Buffer 512 (vs 1024) for lower capture latency
+    const processor = inputCtx.createScriptProcessor(512, 1, 1);
     liveProcessorRef.current = processor;
 
     source.connect(processor);
-    processor.connect(audioCtx.destination);
+    // Connect to a silent gain node (gain=0) so onaudioprocess fires WITHOUT sending mic audio to speakers
+    const silentGain = inputCtx.createGain();
+    silentGain.gain.value = 0;
+    processor.connect(silentGain);
+    silentGain.connect(inputCtx.destination);
 
     processor.onaudioprocess = (e) => {
       if (isLiveCallMuted || !liveWsRef.current || liveWsRef.current.readyState !== WebSocket.OPEN) {
@@ -407,12 +440,15 @@ export default function ChatPage() {
       ws.onopen = () => {
         setIsLiveCallConnected(true);
         setLiveCallStatus('Initializing Devika...');
+        // Initialise the 24 kHz output context as soon as WS opens
+        initOutputAudio();
         
         const setupMessage = {
           setup: {
             model: 'models/gemini-2.5-flash-native-audio-latest',
             generationConfig: {
-              responseModalities: ['AUDIO'],
+              // TEXT alongside AUDIO so transcripts bridge back to the chat thread
+              responseModalities: ['AUDIO', 'TEXT'],
               speechConfig: {
                 voiceConfig: {
                   prebuiltVoiceConfig: {
@@ -474,10 +510,28 @@ export default function ChatPage() {
             
             if (modelTurn && modelTurn.parts) {
               setLiveCallStatus('Devika is speaking...');
+              let voiceTranscript = '';
               for (const part of modelTurn.parts) {
+                // Play audio chunk
                 if (part.inlineData && part.inlineData.data) {
                   playLivePCMChunk(part.inlineData.data);
                 }
+                // Collect text transcript (returned when responseModalities includes 'TEXT')
+                if (part.text) {
+                  voiceTranscript += part.text;
+                }
+              }
+              // Bridge transcript into the chat thread
+              if (voiceTranscript.trim()) {
+                setMessages(prev => [
+                  ...prev,
+                  {
+                    id: generateUniqueId('voice_mentor'),
+                    sender: 'mentor' as const,
+                    text: voiceTranscript.trim(),
+                    timestamp: new Date(),
+                  }
+                ]);
               }
             }
             
@@ -545,7 +599,7 @@ export default function ChatPage() {
     }
   }, []);
 
-  // Initialize session ID from localStorage
+  // Initialize session ID from localStorage + restore any saved draft
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
       let activeSessionId = localStorage.getItem('ai_chat_session_id');
@@ -556,8 +610,30 @@ export default function ChatPage() {
       setTimeout(() => {
         setSessionId(activeSessionId);
       }, 0);
+      // Restore unsaved draft if present
+      const savedDraft = localStorage.getItem('chat_draft');
+      if (savedDraft) {
+        setInput(savedDraft);
+      }
     }
   }, []);
+
+  // Auto-save draft to localStorage with 400 ms debounce
+  React.useEffect(() => {
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    draftSaveTimerRef.current = setTimeout(() => {
+      if (typeof window !== 'undefined') {
+        if (input.trim()) {
+          localStorage.setItem('chat_draft', input);
+        } else {
+          localStorage.removeItem('chat_draft');
+        }
+      }
+    }, 400);
+    return () => {
+      if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    };
+  }, [input]);
 
   // Load chat sessions for sidebar
   const loadChatSessions = React.useCallback(async () => {
@@ -815,6 +891,8 @@ export default function ChatPage() {
     if (!queryText.trim() || sendingRef.current) return;
 
     setInput('');
+    // Clear saved draft immediately on send
+    if (typeof window !== 'undefined') localStorage.removeItem('chat_draft');
     setSending(true);
     sendingRef.current = true;
 
@@ -1155,6 +1233,22 @@ export default function ChatPage() {
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Draft saved indicator — shown above input bar when draft is non-empty */}
+        {input.trim() && !sending && (
+          <div className="px-4 pt-1 pb-0 flex items-center gap-1.5">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
+            <span className="text-[10px] text-amber-400/80 font-medium">Draft saved</span>
+          </div>
+        )}
+
+        {/* Live call active banner inside chat */}
+        {isLiveCallActive && (
+          <div className="mx-4 mb-1 mt-1 flex items-center gap-2 px-3 py-1.5 bg-emerald-600/10 border border-emerald-500/30 rounded-lg">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+            <span className="text-[11px] text-emerald-400 font-semibold">🎤 Voice session active — Devika's responses will appear above in chat</span>
+          </div>
+        )}
+
         {/* Input Bar */}
         <form onSubmit={handleSend} className="p-4 border-t border-zinc-800 bg-zinc-950/40 flex items-center gap-3 light-theme:bg-zinc-50 light-theme:border-zinc-200">
           {/* Audio voice recognition trigger */}
@@ -1173,16 +1267,15 @@ export default function ChatPage() {
 
           <input
             type="text"
-            required
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={isRecording ? "Listening to your voice..." : "Ask a question (e.g. What is the difference between provision and reserve?)"}
+            placeholder={isRecording ? "Listening to your voice..." : isLiveCallActive ? "Voice session active — or type here to chat" : "Ask a question (e.g. What is the difference between provision and reserve?)"}
             className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 text-sm light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-900 light-theme:placeholder-zinc-400"
           />
 
           <button
             type="submit"
-            disabled={sending}
+            disabled={sending || !input.trim()}
             className="p-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white rounded-xl transition-all shadow-md shadow-indigo-600/10 cursor-pointer disabled:opacity-50"
           >
             <Send className="h-5 w-5" />
