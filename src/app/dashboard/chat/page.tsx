@@ -243,6 +243,7 @@ export default function ChatPage() {
   const liveProcessorRef = React.useRef<ScriptProcessorNode | null>(null);
   const liveSourcesRef = React.useRef<AudioBufferSourceNode[]>([]);
   const liveNextPlayTimeRef = React.useRef<number>(0);
+  const currentVoiceResponseIdRef = React.useRef<string | null>(null);
   // Draft persistence
   const draftSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -273,6 +274,7 @@ export default function ChatPage() {
   // Helper: Clean up resources
   const cleanupLiveCall = () => {
     stopLiveAudioPlayback();
+    currentVoiceResponseIdRef.current = null;
     
     if (liveProcessorRef.current) {
       try { liveProcessorRef.current.disconnect(); } catch {}
@@ -350,7 +352,8 @@ export default function ChatPage() {
     liveSourcesRef.current.push(source);
     
     const now = audioCtx.currentTime;
-    if (liveNextPlayTimeRef.current < now) {
+    // Prevent accumulated queue latency: if play head is in the past, or exceeds 150ms of lag, align back to real-time
+    if (liveNextPlayTimeRef.current < now || (liveNextPlayTimeRef.current - now) > 0.15) {
       liveNextPlayTimeRef.current = now + 0.01;
     }
     source.start(liveNextPlayTimeRef.current);
@@ -372,8 +375,8 @@ export default function ChatPage() {
     liveInputAudioCtxRef.current = inputCtx;
 
     const source = inputCtx.createMediaStreamSource(stream);
-    // Buffer 512 (vs 1024) for lower capture latency
-    const processor = inputCtx.createScriptProcessor(512, 1, 1);
+    // Buffer size 1024 (instead of 512) for lower CPU callback frequency (prevents main thread stutters)
+    const processor = inputCtx.createScriptProcessor(1024, 1, 1);
     liveProcessorRef.current = processor;
 
     source.connect(processor);
@@ -504,6 +507,7 @@ export default function ChatPage() {
             
             if (interrupted) {
               stopLiveAudioPlayback();
+              currentVoiceResponseIdRef.current = null;
               setLiveCallStatus('Listening...');
               return;
             }
@@ -521,21 +525,35 @@ export default function ChatPage() {
                   voiceTranscript += part.text;
                 }
               }
-              // Bridge transcript into the chat thread
+              // Bridge transcript into a single consolidated chat bubble
               if (voiceTranscript.trim()) {
-                setMessages(prev => [
-                  ...prev,
-                  {
-                    id: generateUniqueId('voice_mentor'),
-                    sender: 'mentor' as const,
-                    text: voiceTranscript.trim(),
-                    timestamp: new Date(),
+                setMessages(prev => {
+                  const activeId = currentVoiceResponseIdRef.current;
+                  if (activeId) {
+                    return prev.map(msg => 
+                      msg.id === activeId 
+                        ? { ...msg, text: msg.text + voiceTranscript } 
+                        : msg
+                    );
+                  } else {
+                    const newId = generateUniqueId('voice_mentor');
+                    currentVoiceResponseIdRef.current = newId;
+                    return [
+                      ...prev,
+                      {
+                        id: newId,
+                        sender: 'mentor' as const,
+                        text: voiceTranscript,
+                        timestamp: new Date()
+                      }
+                    ];
                   }
-                ]);
+                });
               }
             }
             
             if (turnComplete) {
+              currentVoiceResponseIdRef.current = null;
               setTimeout(() => {
                 setLiveCallStatus('Listening...');
               }, 100);
