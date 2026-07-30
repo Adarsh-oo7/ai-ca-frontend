@@ -249,11 +249,15 @@ export default function ChatPage() {
 
   // Helper: Convert ArrayBuffer to Base64
   const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
-    let binary = '';
     const bytes = new Uint8Array(buffer);
     const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    let binary = '';
+    const chunk = 1024;
+    for (let i = 0; i < len; i += chunk) {
+      binary += String.fromCharCode.apply(
+        null,
+        bytes.subarray(i, i + chunk) as any
+      );
     }
     return window.btoa(binary);
   };
@@ -352,8 +356,8 @@ export default function ChatPage() {
     liveSourcesRef.current.push(source);
     
     const now = audioCtx.currentTime;
-    // Prevent accumulated queue latency: if play head is in the past, or exceeds 150ms of lag, align back to real-time
-    if (liveNextPlayTimeRef.current < now || (liveNextPlayTimeRef.current - now) > 0.15) {
+    // Prevent accumulated queue latency: if play head is in the past, or exceeds 1.2s of lag, align back to real-time
+    if (liveNextPlayTimeRef.current < now || (liveNextPlayTimeRef.current - now) > 1.2) {
       liveNextPlayTimeRef.current = now + 0.01;
     }
     source.start(liveNextPlayTimeRef.current);
