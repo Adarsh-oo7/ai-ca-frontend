@@ -370,12 +370,13 @@ export default function ChatPage() {
     liveSourcesRef.current.push(source);
     
     const now = audioCtx.currentTime;
-    // Prevent accumulated queue latency: if play head is in the past, or exceeds 1.2s of lag, align back to real-time
-    if (liveNextPlayTimeRef.current < now || (liveNextPlayTimeRef.current - now) > 1.2) {
-      liveNextPlayTimeRef.current = now + 0.01;
+    // Prevent overlap & accumulated queue latency: if play head is in past or lag > 0.8s, align smoothly
+    if (liveNextPlayTimeRef.current < now || (liveNextPlayTimeRef.current - now) > 0.8) {
+      liveNextPlayTimeRef.current = now + 0.005;
     }
-    source.start(liveNextPlayTimeRef.current);
-    liveNextPlayTimeRef.current += audioBuffer.duration;
+    const startTime = liveNextPlayTimeRef.current;
+    source.start(startTime);
+    liveNextPlayTimeRef.current = startTime + audioBuffer.duration;
   };
 
   // Helper: Create the dedicated 24 kHz output AudioContext for Gemini PCM playback
@@ -418,11 +419,11 @@ export default function ChatPage() {
       }
       const rms = Math.sqrt(sum / inputData.length);
 
-      // Adaptive threshold: if AI is actively speaking, use higher threshold (0.05)
+      // Adaptive threshold: if AI is actively speaking, use higher threshold (0.08)
       // to prevent speaker bleed into mic from triggering double-speaking loops.
       // If AI is quiet, use 0.015 to ignore background mic hiss.
       const isAiSpeaking = isAiSpeakingRef.current || liveSourcesRef.current.length > 0;
-      const threshold = isAiSpeaking ? 0.05 : 0.015;
+      const threshold = isAiSpeaking ? 0.08 : 0.015;
 
       if (rms < threshold) {
         return; // Silent/noise/echo buffer — skip sending to Gemini
