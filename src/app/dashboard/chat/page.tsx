@@ -799,11 +799,11 @@ export default function ChatPage() {
               className={`flex items-center gap-1.5 px-3.5 py-2 ${
                 isLiveModalOpen
                   ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700'
-                  : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white cursor-pointer shadow-md shadow-emerald-500/25 border border-emerald-400/30 hover:scale-105 active:scale-95'
-              } rounded-xl text-xs font-extrabold transition-all`}
+                  : 'bg-gradient-to-r from-purple-600 via-violet-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white cursor-pointer shadow-lg shadow-purple-500/30 border border-purple-400/40 hover:scale-105 active:scale-95'
+              } rounded-xl text-xs font-black transition-all`}
               title="Start real-time voice call with Devika AI"
             >
-              <Sparkles className="h-4 w-4 text-emerald-100 animate-pulse" />
+              <Sparkles className="h-4 w-4 text-purple-200 animate-pulse" />
               <span>{isLiveModalOpen ? 'Calling...' : 'Live Talk'}</span>
             </button>
 
