@@ -440,7 +440,11 @@ export default function ChatPage() {
       liveMediaStreamRef.current = stream;
 
       setLiveCallStatus('Connecting to Devika...');
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(apiKey)}`;
+      const cleanToken = apiKey ? apiKey.replace(/^auth_tokens\//, '') : '';
+      const isDirectKey = apiKey && apiKey.startsWith('AIza');
+      const wsUrl = isDirectKey
+        ? `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?key=${encodeURIComponent(apiKey)}`
+        : `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(cleanToken)}`;
       const ws = new WebSocket(wsUrl);
       liveWsRef.current = ws;
 
