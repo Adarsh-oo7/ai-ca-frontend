@@ -795,16 +795,16 @@ export default function ChatPage() {
             {/* Live Call Button */}
             <button
               onClick={startLiveCall}
-              disabled={isLiveCallActive}
-              className={`flex items-center gap-1.5 px-3 py-2 ${
-                isLiveCallActive
-                  ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow-sm shadow-emerald-600/10'
-              } rounded-lg text-xs font-bold transition-colors`}
-              title="Start real-time voice call (Gemini Live)"
+              disabled={isLiveModalOpen}
+              className={`flex items-center gap-1.5 px-3.5 py-2 ${
+                isLiveModalOpen
+                  ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700'
+                  : 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white cursor-pointer shadow-md shadow-emerald-500/25 border border-emerald-400/30 hover:scale-105 active:scale-95'
+              } rounded-xl text-xs font-extrabold transition-all`}
+              title="Start real-time voice call with Devika AI"
             >
-              <Mic className="h-4 w-4" />
-              <span>{isLiveCallActive ? 'Connecting...' : 'Live Talk'}</span>
+              <Sparkles className="h-4 w-4 text-emerald-100 animate-pulse" />
+              <span>{isLiveModalOpen ? 'Calling...' : 'Live Talk'}</span>
             </button>
 
             {/* Voice toggle */}
