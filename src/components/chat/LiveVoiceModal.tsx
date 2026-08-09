@@ -113,6 +113,12 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: LiveVoice
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
   const [transcript, setTranscript] = useState<Array<{ sender: 'student' | 'mentor'; text: string }>>([]);
 
+  const isMutedRef = useRef<boolean>(isMuted);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
   const wsRef = useRef<WebSocket | null>(null);
   const playerRef = useRef<PCMStreamPlayer | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -182,7 +188,7 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: LiveVoice
     const source = inputCtx.createMediaStreamSource(stream);
 
     const processAudioBuffer = (channelData: Float32Array) => {
-      if (isMuted || ws.readyState !== WebSocket.OPEN) return;
+      if (isMutedRef.current || ws.readyState !== WebSocket.OPEN) return;
 
       // RMS calculation
       let sum = 0;
@@ -193,7 +199,7 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: LiveVoice
 
       // Gate mic transmission while AI is speaking to prevent self-interruption echo
       const isAiTalking = playerRef.current?.isPlaying || false;
-      const threshold = isAiTalking ? 0.08 : 0.015;
+      const threshold = isAiTalking ? 0.05 : 0.003;
 
       if (rms < threshold) return;
 
@@ -443,6 +449,9 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: LiveVoice
 
   const handleEndCall = () => {
     const finalTranscript = [...transcript];
+    if (sessionId && finalTranscript.length > 0) {
+      AIService.logVoiceSession(sessionId, finalTranscript).catch(console.error);
+    }
     terminateCall();
     onClose(finalTranscript);
   };

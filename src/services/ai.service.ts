@@ -58,6 +58,15 @@ export const AIService = {
     };
   },
 
+  async logVoiceSession(sessionId: string, turns: Array<{ sender: 'student' | 'mentor'; text: string }>) {
+    if (!sessionId || !turns || turns.length === 0) return;
+    const response = await api.post('/api/ai/chat/log_voice_turn/', {
+      session_id: sessionId,
+      turns,
+    });
+    return response.data;
+  },
+
   async teachConcept(topicId: number | string, sessionId: string, message?: string) {
     const response = await api.post('/api/ai/teach/teach_concept/', {
       topic: topicId,
