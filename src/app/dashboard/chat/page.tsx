@@ -242,6 +242,7 @@ export default function ChatPage() {
   const liveMediaStreamRef = React.useRef<MediaStream | null>(null);
   const liveProcessorRef = React.useRef<ScriptProcessorNode | null>(null);
   const liveSourcesRef = React.useRef<AudioBufferSourceNode[]>([]);
+  const isAiSpeakingRef = React.useRef<boolean>(false);
   const liveNextPlayTimeRef = React.useRef<number>(0);
   const currentVoiceResponseIdRef = React.useRef<string | null>(null);
   // Draft persistence
@@ -270,6 +271,7 @@ export default function ChatPage() {
       } catch {}
     });
     liveSourcesRef.current = [];
+    isAiSpeakingRef.current = false;
     if (liveOutputAudioCtxRef.current) {
       liveNextPlayTimeRef.current = liveOutputAudioCtxRef.current.currentTime;
     }
@@ -330,6 +332,8 @@ export default function ChatPage() {
     if (!liveOutputAudioCtxRef.current) return;
     const audioCtx = liveOutputAudioCtxRef.current;
     
+    isAiSpeakingRef.current = true;
+    
     const binaryString = window.atob(base64Data);
     const len = binaryString.length;
     const bytes = new Uint8Array(len);
@@ -352,6 +356,9 @@ export default function ChatPage() {
     
     source.onended = () => {
       liveSourcesRef.current = liveSourcesRef.current.filter(s => s !== source);
+      if (liveSourcesRef.current.length === 0) {
+        isAiSpeakingRef.current = false;
+      }
     };
     liveSourcesRef.current.push(source);
     
@@ -372,14 +379,14 @@ export default function ChatPage() {
     liveNextPlayTimeRef.current = outputCtx.currentTime;
   };
 
-  // Helper: Initialize mic recording at 16 kHz (input-only context, separate from playback)
+  // Helper: Initialize mic recording at 16 kHz with RMS gating & echo suppression
   const initAudioRecording = (stream: MediaStream) => {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     const inputCtx = new AudioContextClass({ sampleRate: 16000 });
     liveInputAudioCtxRef.current = inputCtx;
 
     const source = inputCtx.createMediaStreamSource(stream);
-    // Buffer size 1024 (instead of 512) for lower CPU callback frequency (prevents main thread stutters)
+    // Buffer size 1024 for low-latency processing
     const processor = inputCtx.createScriptProcessor(1024, 1, 1);
     liveProcessorRef.current = processor;
 
@@ -396,6 +403,23 @@ export default function ChatPage() {
       }
 
       const inputData = e.inputBuffer.getChannelData(0);
+
+      // RMS calculation for Noise Gate & Echo Cancellation
+      let sum = 0;
+      for (let i = 0; i < inputData.length; i++) {
+        sum += inputData[i] * inputData[i];
+      }
+      const rms = Math.sqrt(sum / inputData.length);
+
+      // Adaptive threshold: if AI is actively speaking, use higher threshold (0.05)
+      // to prevent speaker bleed into mic from triggering double-speaking loops.
+      // If AI is quiet, use 0.015 to ignore background mic hiss.
+      const isAiSpeaking = isAiSpeakingRef.current || liveSourcesRef.current.length > 0;
+      const threshold = isAiSpeaking ? 0.05 : 0.015;
+
+      if (rms < threshold) {
+        return; // Silent/noise/echo buffer — skip sending to Gemini
+      }
       
       const pcmBuffer = new Int16Array(inputData.length);
       for (let i = 0; i < inputData.length; i++) {
@@ -840,7 +864,7 @@ export default function ChatPage() {
   };
 
   const speakText = async (text: string) => {
-    if (!voiceEnabled || typeof window === 'undefined') return;
+    if (!voiceEnabled || typeof window === 'undefined' || isLiveCallActive) return;
     
     stopSpeaking();
 
