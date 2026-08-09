@@ -502,7 +502,7 @@ export default function ChatPage() {
   };
 
   const speakText = async (text: string) => {
-    if (!voiceEnabled || typeof window === 'undefined' || isLiveCallActive) return;
+    if (!voiceEnabled || typeof window === 'undefined' || isLiveModalOpen) return;
     
     stopSpeaking();
 
@@ -935,10 +935,10 @@ export default function ChatPage() {
         )}
 
         {/* Live call active banner inside chat */}
-        {isLiveCallActive && (
-          <div className="mx-4 mb-1 mt-1 flex items-center gap-2 px-3 py-1.5 bg-emerald-600/10 border border-emerald-500/30 rounded-lg">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
-            <span className="text-[11px] text-emerald-400 font-semibold">🎤 Voice session active — Devika's responses will appear above in chat</span>
+        {isLiveModalOpen && (
+          <div className="mx-4 mb-1 mt-1 flex items-center gap-2 px-3 py-1.5 bg-purple-600/10 border border-purple-500/30 rounded-lg">
+            <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-ping" />
+            <span className="text-[11px] text-purple-300 font-semibold">🎤 Voice session active — Devika's responses will appear in chat</span>
           </div>
         )}
 
@@ -962,7 +962,7 @@ export default function ChatPage() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={isRecording ? "Listening to your voice..." : isLiveCallActive ? "Voice session active — or type here to chat" : "Ask a question (e.g. What is the difference between provision and reserve?)"}
+            placeholder={isRecording ? "Listening to your voice..." : isLiveModalOpen ? "Voice session active — or type here to chat" : "Ask a question (e.g. What is the difference between provision and reserve?)"}
             className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-indigo-500 text-sm light-theme:bg-white light-theme:border-zinc-200 light-theme:text-zinc-900 light-theme:placeholder-zinc-400"
           />
 
