@@ -181,14 +181,21 @@ const generateUniqueId = (prefix: string) => {
 };
 
 export default function ChatPage() {
-  const [messages, setMessages] = React.useState<Message[]>([
-    {
-      id: 'welcome',
-      sender: 'mentor',
-      text: "Hello! I am your personal CA Foundation AI mentor. Ask me anything about Accounting, Business Laws, Math/Stats, or Economics, and I will search your ICAI library to give you precise answers with citations. You can also click the Mic icon to speak to me!",
-      timestamp: new Date()
-    }
-  ]);
+  const [messages, setMessages] = React.useState<Message[]>([]);
+  const [isMounted, setIsMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsMounted(true);
+    setMessages([
+      {
+        id: 'welcome',
+        sender: 'mentor',
+        text: "Hello! I am your personal CA Foundation AI mentor. Ask me anything about Accounting, Business Laws, Math/Stats, or Economics, and I will search your ICAI library to give you precise answers with citations. You can also click the Mic icon to speak to me!",
+        timestamp: new Date()
+      }
+    ]);
+  }, []);
+
   const [input, setInput] = React.useState('');
   const [subjects, setSubjects] = React.useState<Subject[]>([]);
   const [selectedSubject, setSelectedSubject] = React.useState<string>('');
@@ -465,10 +472,7 @@ export default function ChatPage() {
 
       setLiveCallStatus('Connecting to Devika...');
       const cleanToken = apiKey ? apiKey.replace(/^auth_tokens\//, '') : '';
-      const isDirectKey = apiKey && apiKey.startsWith('AIza');
-      const wsUrl = isDirectKey
-        ? `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?key=${encodeURIComponent(apiKey)}`
-        : `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(cleanToken)}`;
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(cleanToken)}`;
       const ws = new WebSocket(wsUrl);
       liveWsRef.current = ws;
 
