@@ -70,7 +70,7 @@ class PCMStreamPlayer {
       this.onStateChange?.(true);
 
       const now = this.ctx.currentTime;
-      if (this.nextPlayTime < now || this.nextPlayTime - now > 0.8) {
+      if (this.nextPlayTime < now) {
         this.nextPlayTime = now + 0.005;
       }
 
@@ -378,16 +378,19 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: LiveVoice
                   playerRef.current?.playChunk(part.inlineData.data);
                 }
                 if (part.text) {
-                  currentMentorTextRef.current += part.text;
-                  const newText = currentMentorTextRef.current;
-                  setTranscript((prev) => {
-                    const last = prev[prev.length - 1];
-                    if (last && last.sender === 'mentor') {
-                      return [...prev.slice(0, -1), { sender: 'mentor', text: newText }];
-                    } else {
-                      return [...prev, { sender: 'mentor', text: newText }];
-                    }
-                  });
+                  const cleanTextChunk = part.text.replace(/\*\*.*?\*\*/g, '').trim();
+                  if (cleanTextChunk) {
+                    currentMentorTextRef.current += (currentMentorTextRef.current ? ' ' : '') + cleanTextChunk;
+                    const newText = currentMentorTextRef.current;
+                    setTranscript((prev) => {
+                      const last = prev[prev.length - 1];
+                      if (last && last.sender === 'mentor') {
+                        return [...prev.slice(0, -1), { sender: 'mentor', text: newText }];
+                      } else {
+                        return [...prev, { sender: 'mentor', text: newText }];
+                      }
+                    });
+                  }
                 }
               }
             }
