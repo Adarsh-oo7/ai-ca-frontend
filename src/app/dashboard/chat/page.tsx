@@ -387,48 +387,32 @@ export default function ChatPage() {
     liveNextPlayTimeRef.current = outputCtx.currentTime;
   };
 
-  // Helper: Initialize mic recording at 16 kHz with RMS gating & echo suppression
-  const initAudioRecording = (stream: MediaStream) => {
+  // Helper: Initialize mic recording at 16 kHz with AudioWorklet (falls back to ScriptProcessor)
+  const initAudioRecording = async (stream: MediaStream) => {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
     const inputCtx = new AudioContextClass({ sampleRate: 16000 });
     liveInputAudioCtxRef.current = inputCtx;
 
     const source = inputCtx.createMediaStreamSource(stream);
-    // Buffer size 1024 for low-latency processing
-    const processor = inputCtx.createScriptProcessor(1024, 1, 1);
-    liveProcessorRef.current = processor;
 
-    source.connect(processor);
-    // Connect to a silent gain node (gain=0) so onaudioprocess fires WITHOUT sending mic audio to speakers
-    const silentGain = inputCtx.createGain();
-    silentGain.gain.value = 0;
-    processor.connect(silentGain);
-    silentGain.connect(inputCtx.destination);
-
-    processor.onaudioprocess = (e) => {
+    const handlePCMChannelData = (inputData: Float32Array) => {
       if (isLiveCallMuted || !liveWsRef.current || liveWsRef.current.readyState !== WebSocket.OPEN) {
         return;
       }
 
-      const inputData = e.inputBuffer.getChannelData(0);
-
-      // RMS calculation for Noise Gate & Echo Cancellation
       let sum = 0;
       for (let i = 0; i < inputData.length; i++) {
         sum += inputData[i] * inputData[i];
       }
       const rms = Math.sqrt(sum / inputData.length);
 
-      // Adaptive threshold: if AI is actively speaking, use higher threshold (0.08)
-      // to prevent speaker bleed into mic from triggering double-speaking loops.
-      // If AI is quiet, use 0.015 to ignore background mic hiss.
       const isAiSpeaking = isAiSpeakingRef.current || liveSourcesRef.current.length > 0;
       const threshold = isAiSpeaking ? 0.08 : 0.015;
 
       if (rms < threshold) {
-        return; // Silent/noise/echo buffer — skip sending to Gemini
+        return;
       }
-      
+
       const pcmBuffer = new Int16Array(inputData.length);
       for (let i = 0; i < inputData.length; i++) {
         const s = Math.max(-1, Math.min(1, inputData[i]));
@@ -449,6 +433,58 @@ export default function ChatPage() {
       } catch (err) {
         console.error('Error sending audio chunk:', err);
       }
+    };
+
+    if ('audioWorklet' in inputCtx) {
+      try {
+        const workletCode = `
+          class PCMProcessor extends AudioWorkletProcessor {
+            process(inputs) {
+              const input = inputs[0];
+              if (input && input.length > 0 && input[0].length > 0) {
+                this.port.postMessage(input[0]);
+              }
+              return true;
+            }
+          }
+          registerProcessor('pcm-processor', PCMProcessor);
+        `;
+        const blob = new Blob([workletCode], { type: 'application/javascript' });
+        const workletUrl = URL.createObjectURL(blob);
+        await inputCtx.audioWorklet.addModule(workletUrl);
+        URL.revokeObjectURL(workletUrl);
+
+        const workletNode = new AudioWorkletNode(inputCtx, 'pcm-processor');
+        liveProcessorRef.current = workletNode as any;
+
+        workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
+          handlePCMChannelData(e.data);
+        };
+
+        source.connect(workletNode);
+        // Connect to silent gain to keep worklet alive without feedback
+        const silentGain = inputCtx.createGain();
+        silentGain.gain.value = 0;
+        workletNode.connect(silentGain);
+        silentGain.connect(inputCtx.destination);
+        return;
+      } catch (e) {
+        console.warn('AudioWorklet initialization fallback to ScriptProcessor:', e);
+      }
+    }
+
+    // Fallback to ScriptProcessorNode for older environments
+    const processor = inputCtx.createScriptProcessor(1024, 1, 1);
+    liveProcessorRef.current = processor;
+
+    source.connect(processor);
+    const silentGain = inputCtx.createGain();
+    silentGain.gain.value = 0;
+    processor.connect(silentGain);
+    silentGain.connect(inputCtx.destination);
+
+    processor.onaudioprocess = (e) => {
+      handlePCMChannelData(e.inputBuffer.getChannelData(0));
     };
   };
 
