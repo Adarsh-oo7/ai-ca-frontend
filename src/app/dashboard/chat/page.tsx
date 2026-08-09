@@ -227,6 +227,7 @@ export default function ChatPage() {
   const sessionIdRef = React.useRef(sessionId);
   const selectedSubjectRef = React.useRef(selectedSubject);
   const activeAudioRef = React.useRef<HTMLAudioElement | null>(null);
+  const draftSaveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   React.useEffect(() => {
     sessionIdRef.current = sessionId;
