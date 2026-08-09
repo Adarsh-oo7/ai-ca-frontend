@@ -453,11 +453,21 @@ export default function ChatPage() {
 
   // Main: Start the Live Voice Call session
   const startLiveCall = async () => {
+    if (isLiveCallActive || liveWsRef.current) {
+      return;
+    }
+
+    stopSpeaking();
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    cleanupLiveCall();
+
     setIsLiveCallActive(true);
     setLiveCallStatus('Requesting access key...');
     
     try {
-      const { apiKey, systemInstruction, initialMessage } = await AIService.getLiveConfig(sessionId || null);
+      const { apiKey, systemInstruction } = await AIService.getLiveConfig(sessionId || null);
       
       setLiveCallStatus('Requesting microphone permission...');
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -506,6 +516,7 @@ export default function ChatPage() {
       };
 
       ws.onmessage = async (event) => {
+        if (ws !== liveWsRef.current) return;
         try {
           let text = '';
           if (typeof event.data === 'string') {
@@ -524,13 +535,12 @@ export default function ChatPage() {
             initAudioRecording(stream);
             setLiveCallStatus('Devika is greeting you...');
 
-            // Send the context-aware opening line so Devika speaks first
-            const greeting = initialMessage || `Hey! I am Devika, your CA Foundation teacher. What shall we study today?`;
+            // Send clean initial prompt
             ws.send(JSON.stringify({
               clientContent: {
                 turns: [{
                   role: 'user',
-                  parts: [{ text: `Hi Devika! (Devika, please greet the student by saying exactly: "${greeting}")` }]
+                  parts: [{ text: "Hello Devika! I am ready for our lesson." }]
                 }],
                 turnComplete: true
               }
@@ -606,6 +616,7 @@ export default function ChatPage() {
       };
 
       ws.onclose = (event) => {
+        if (ws !== liveWsRef.current) return;
         console.error('Gemini Live WS Close:', event.code, event.reason);
         setLiveCallStatus(`Connection closed (Code: ${event.code}${event.reason ? `, Reason: ${event.reason}` : ''}).`);
         setIsLiveCallConnected(false);
@@ -1162,11 +1173,16 @@ export default function ChatPage() {
             {/* Live Call Button */}
             <button
               onClick={startLiveCall}
-              className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-sm shadow-emerald-600/10"
+              disabled={isLiveCallActive}
+              className={`flex items-center gap-1.5 px-3 py-2 ${
+                isLiveCallActive
+                  ? 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow-sm shadow-emerald-600/10'
+              } rounded-lg text-xs font-bold transition-colors`}
               title="Start real-time voice call (Gemini Live)"
             >
               <Mic className="h-4 w-4" />
-              <span>Live Talk</span>
+              <span>{isLiveCallActive ? 'Connecting...' : 'Live Talk'}</span>
             </button>
 
             {/* Voice toggle */}
