@@ -275,9 +275,9 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
       });
       streamRef.current = stream;
 
-      // 3. Open Gemini Live WebSocket
-      // Use ?key= for direct API key (stable) vs ?access_token= for ephemeral tokens
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(apiKey)}`;
+      // 3. Open WebSocket to our backend proxy (which connects to Gemini server-to-server)
+      // This avoids exposing any API key in the browser.
+      const wsUrl = `wss://api-study.digitalproductsolutions.in/ws/gemini-live/`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
