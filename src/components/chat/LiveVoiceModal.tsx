@@ -13,7 +13,7 @@ const GEMINI_MODEL      = 'models/gemini-2.5-flash-native-audio-latest';
 const VOICE_NAME        = 'Aoede';
 const QUIET_THRESHOLD   = 0.003;   // RMS gate when student is talking
 const AI_ECHO_GATE      = 0.06;    // RMS gate when AI is speaking (blocks echo)
-const KEEPALIVE_MS      = 8000;    // Ping Gemini every 8s to prevent idle timeout
+
 const MAX_RECONNECTS    = 5;       // Max auto-reconnect attempts
 const RECONNECT_BASE_MS = 1500;    // Initial reconnect delay (doubles each attempt)
 
@@ -421,15 +421,8 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
         }
       };
 
-      // ── Keep-alive: send a silent ping every 8s to prevent idle timeout ──
-      keepAliveTimer.current = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          try {
-            // Send an empty client-content heartbeat
-            ws.send(JSON.stringify({ clientContent: { turns: [], turnComplete: false } }));
-          } catch {}
-        }
-      }, KEEPALIVE_MS);
+      // Gemini Live WS stays alive as long as mic PCM data is flowing.
+      // No keep-alive ping needed — invalid messages cause immediate disconnects.
 
     } catch (err: any) {
       console.error('Failed to start Live Call:', err);
