@@ -276,11 +276,9 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
       streamRef.current = stream;
 
       // 3. Open Gemini Live WebSocket
-      const token = apiKey.replace(/^auth_tokens\//, '');
-      // Gemini 2.5 Flash native audio Live API endpoint
-      const ws = new WebSocket(
-        `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=${encodeURIComponent(token)}`
-      );
+      // Use ?key= for direct API key (stable) vs ?access_token= for ephemeral tokens
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(apiKey)}`;
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
 
