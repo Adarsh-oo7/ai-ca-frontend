@@ -7,12 +7,15 @@ import { AIService } from '@/services/ai.service';
 // ─────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────
-const MIC_SAMPLE_RATE = 16000;   // Gemini requires 16 kHz input
-const OUT_SAMPLE_RATE = 24000;   // Gemini outputs 24 kHz PCM
-const GEMINI_MODEL    = 'models/gemini-2.5-flash-native-audio-latest';
-const VOICE_NAME      = 'Aoede';
-const QUIET_THRESHOLD = 0.003;   // RMS gate when student is talking
-const AI_ECHO_GATE    = 0.06;    // RMS gate when AI is speaking (blocks echo)
+const MIC_SAMPLE_RATE   = 16000;   // Gemini requires 16 kHz input
+const OUT_SAMPLE_RATE   = 24000;   // Gemini outputs 24 kHz PCM
+const GEMINI_MODEL      = 'models/gemini-2.5-flash-native-audio-latest';
+const VOICE_NAME        = 'Aoede';
+const QUIET_THRESHOLD   = 0.003;   // RMS gate when student is talking
+const AI_ECHO_GATE      = 0.06;    // RMS gate when AI is speaking (blocks echo)
+const KEEPALIVE_MS      = 8000;    // Ping Gemini every 8s to prevent idle timeout
+const MAX_RECONNECTS    = 5;       // Max auto-reconnect attempts
+const RECONNECT_BASE_MS = 1500;    // Initial reconnect delay (doubles each attempt)
 
 // ─────────────────────────────────────────────────────────────────
 // PCM PLAYER  — gapless, no overlaps
@@ -144,17 +147,29 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
   const inCtxRef     = useRef<AudioContext | null>(null);
   const workletRef   = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
   const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const mutedRef     = useRef(false);
-  const transcriptRef = useRef<Array<{ sender: 'student' | 'mentor'; text: string }>>([]);
+  const mutedRef         = useRef(false);
+  const transcriptRef    = useRef<Array<{ sender: 'student' | 'mentor'; text: string }>>([]);
   const currentMentorRef = useRef('');
+  const reconnectCount   = useRef(0);
+  const reconnectTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keepAliveTimer   = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isClosingRef     = useRef(false);  // true = user pressed end call
 
   // Keep mutedRef in sync without causing re-renders
   mutedRef.current = muted;
 
   // ── Cleanup ──────────────────────────────────────────────────
   const cleanup = useCallback(() => {
+    isClosingRef.current = true;
+
     timerRef.current && clearInterval(timerRef.current);
     timerRef.current = null;
+
+    keepAliveTimer.current && clearInterval(keepAliveTimer.current);
+    keepAliveTimer.current = null;
+
+    reconnectTimer.current && clearTimeout(reconnectTimer.current);
+    reconnectTimer.current = null;
 
     try { workletRef.current?.disconnect(); } catch {}
     workletRef.current = null;
@@ -168,8 +183,9 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
     playerRef.current?.close();
     playerRef.current = null;
 
-    try { wsRef.current?.close(); } catch {}
+    const ws = wsRef.current;
     wsRef.current = null;
+    try { ws?.close(1000, 'User ended call'); } catch {}
 
     setSpeaking(false);
   }, []);
@@ -233,6 +249,8 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
     setLastLine('');
     transcriptRef.current = [];
     currentMentorRef.current = '';
+    isClosingRef.current = false;
+    // Don't reset reconnectCount here — it accumulates across reconnects
 
     playerRef.current = new PCMPlayer(playing => {
       setSpeaking(playing);
@@ -372,14 +390,46 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
 
       ws.onerror = (e) => {
         console.error('Gemini Live WS error:', e);
-        setStatus('Connection error. Check network or API key.');
+        // Don't show error if we're already reconnecting
       };
 
       ws.onclose = (e) => {
         if (ws !== wsRef.current) return;
         console.log('Gemini Live WS closed:', e.code, e.reason);
-        setStatus(e.wasClean ? 'Call ended.' : `Disconnected (${e.code}).`);
+
+        // Stop keep-alive ping
+        keepAliveTimer.current && clearInterval(keepAliveTimer.current);
+        keepAliveTimer.current = null;
+
+        // Code 1000 = normal close (user pressed End Call)
+        // isClosingRef = user intentionally ended
+        if (isClosingRef.current || e.code === 1000) {
+          setStatus('Call ended.');
+          return;
+        }
+
+        // Unexpected drop — auto-reconnect
+        if (reconnectCount.current < MAX_RECONNECTS) {
+          reconnectCount.current++;
+          const delay = RECONNECT_BASE_MS * Math.pow(2, reconnectCount.current - 1);
+          setStatus(`Connection lost. Reconnecting in ${Math.round(delay / 1000)}s... (${reconnectCount.current}/${MAX_RECONNECTS})`);
+          reconnectTimer.current = setTimeout(() => {
+            if (!isClosingRef.current) connect();
+          }, delay);
+        } else {
+          setStatus('Disconnected. Please end and restart the call.');
+        }
       };
+
+      // ── Keep-alive: send a silent ping every 8s to prevent idle timeout ──
+      keepAliveTimer.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            // Send an empty client-content heartbeat
+            ws.send(JSON.stringify({ clientContent: { turns: [], turnComplete: false } }));
+          } catch {}
+        }
+      }, KEEPALIVE_MS);
 
     } catch (err: any) {
       console.error('Failed to start Live Call:', err);
@@ -401,6 +451,7 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
   // ── End call handler ─────────────────────────────────────────
   const handleEnd = useCallback(() => {
     const final = [...transcriptRef.current];
+    reconnectCount.current = 0;
     if (sessionId && final.length > 0) {
       AIService.logVoiceSession(sessionId, final).catch(console.error);
     }
