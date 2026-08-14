@@ -1,532 +1,490 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
-import { Mic, MicOff, PhoneOff, Sparkles, Volume2 } from 'lucide-react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { Mic, MicOff, PhoneOff, Sparkles } from 'lucide-react';
 import { AIService } from '@/services/ai.service';
 
-interface LiveVoiceModalProps {
-  isOpen: boolean;
-  onClose: (transcriptMessages?: Array<{ sender: 'student' | 'mentor'; text: string }>) => void;
-  sessionId?: string;
-}
+// ─────────────────────────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────────────────────────
+const MIC_SAMPLE_RATE = 16000;   // Gemini requires 16 kHz input
+const OUT_SAMPLE_RATE = 24000;   // Gemini outputs 24 kHz PCM
+const GEMINI_MODEL    = 'models/gemini-2.5-flash-native-audio-latest';
+const VOICE_NAME      = 'Aoede';
+const QUIET_THRESHOLD = 0.003;   // RMS gate when student is talking
+const AI_ECHO_GATE    = 0.06;    // RMS gate when AI is speaking (blocks echo)
 
-// PCM Stream Player for 24 kHz audio chunks
-class PCMStreamPlayer {
+// ─────────────────────────────────────────────────────────────────
+// PCM PLAYER  — gapless, no overlaps
+// ─────────────────────────────────────────────────────────────────
+class PCMPlayer {
   private ctx: AudioContext | null = null;
-  private nextPlayTime: number = 0;
-  private activeSources: AudioBufferSourceNode[] = [];
-  public isPlaying: boolean = false;
-  private onStateChange?: (playing: boolean) => void;
+  private nextTime = 0;
+  private sources: AudioBufferSourceNode[] = [];
+  public playing = false;
+  private onChange?: (p: boolean) => void;
 
-  constructor(onStateChange?: (playing: boolean) => void) {
-    this.onStateChange = onStateChange;
+  constructor(onChange?: (p: boolean) => void) {
+    this.onChange = onChange;
   }
 
-  public init() {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    this.ctx = new AudioCtx({ sampleRate: 24000 });
-    this.nextPlayTime = this.ctx.currentTime;
+  init() {
+    if (this.ctx) return;
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+    this.ctx = new Ctx({ sampleRate: OUT_SAMPLE_RATE });
+    this.nextTime = this.ctx.currentTime;
   }
 
-  public playChunk(base64Data: string) {
-    if (!this.ctx) this.init();
+  playChunk(b64: string) {
+    this.init();
     if (!this.ctx) return;
-
-    // Resume AudioContext if suspended (e.g. browser autoplay restriction)
-    if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
-    }
+    if (this.ctx.state === 'suspended') this.ctx.resume();
 
     try {
-      const binaryString = window.atob(base64Data);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-      const int16 = new Int16Array(bytes.buffer);
-      const float32 = new Float32Array(int16.length);
-      for (let i = 0; i < int16.length; i++) {
-        float32[i] = int16[i] / 32768.0;
-      }
+      const raw   = atob(b64);
+      const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
+      const i16   = new Int16Array(bytes.buffer);
+      const f32   = new Float32Array(i16.length);
+      for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768.0;
 
-      const buffer = this.ctx.createBuffer(1, float32.length, 24000);
-      buffer.copyToChannel(float32, 0);
+      const buf = this.ctx.createBuffer(1, f32.length, OUT_SAMPLE_RATE);
+      buf.copyToChannel(f32, 0);
 
-      const source = this.ctx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(this.ctx.destination);
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(this.ctx.destination);
 
-      source.onended = () => {
-        this.activeSources = this.activeSources.filter((s) => s !== source);
-        if (this.activeSources.length === 0) {
-          this.isPlaying = false;
-          this.onStateChange?.(false);
+      src.onended = () => {
+        this.sources = this.sources.filter(s => s !== src);
+        if (this.sources.length === 0) {
+          this.playing = false;
+          this.onChange?.(false);
         }
       };
 
-      this.activeSources.push(source);
-      this.isPlaying = true;
-      this.onStateChange?.(true);
-
       const now = this.ctx.currentTime;
-      if (this.nextPlayTime < now) {
-        this.nextPlayTime = now + 0.005;
+      if (this.nextTime < now) this.nextTime = now + 0.01;
+      src.start(this.nextTime);
+      this.nextTime += buf.duration;
+
+      this.sources.push(src);
+      if (!this.playing) {
+        this.playing = true;
+        this.onChange?.(true);
       }
+    } catch {}
+  }
 
-      source.start(this.nextPlayTime);
-      this.nextPlayTime += buffer.duration;
-    } catch (e) {
-      console.error('Error decoding PCM chunk:', e);
+  stop() {
+    this.sources.forEach(s => { try { s.stop(); } catch {} });
+    this.sources = [];
+    if (this.ctx) this.nextTime = this.ctx.currentTime;
+    if (this.playing) {
+      this.playing = false;
+      this.onChange?.(false);
     }
   }
 
-  public stop() {
-    this.activeSources.forEach((s) => {
-      try {
-        s.stop();
-      } catch {}
-    });
-    this.activeSources = [];
-    this.isPlaying = false;
-    this.onStateChange?.(false);
-    if (this.ctx) {
-      this.nextPlayTime = this.ctx.currentTime;
-    }
-  }
-
-  public close() {
+  close() {
     this.stop();
-    if (this.ctx) {
-      try {
-        this.ctx.close();
-      } catch {}
-      this.ctx = null;
-    }
+    try { this.ctx?.close(); } catch {}
+    this.ctx = null;
   }
 }
 
-export default function LiveVoiceModal({ isOpen, onClose, sessionId }: LiveVoiceModalProps) {
-  const [status, setStatus] = useState<string>('Initializing...');
-  const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [callDuration, setCallDuration] = useState<number>(0);
-  const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
-  const [transcript, setTranscript] = useState<Array<{ sender: 'student' | 'mentor'; text: string }>>([]);
+// ─────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────
+function f32ToB64(f32: Float32Array): string {
+  const i16 = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) {
+    const clamped = Math.max(-1, Math.min(1, f32[i]));
+    i16[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+  }
+  const bytes = new Uint8Array(i16.buffer);
+  let bin = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(bin);
+}
 
-  const isMutedRef = useRef<boolean>(isMuted);
+function rms(buf: Float32Array): number {
+  let s = 0;
+  for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+  return Math.sqrt(s / buf.length);
+}
 
-  useEffect(() => {
-    isMutedRef.current = isMuted;
-  }, [isMuted]);
+function fmt(secs: number) {
+  const m = Math.floor(secs / 60), s = secs % 60;
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
 
-  const wsRef = useRef<WebSocket | null>(null);
-  const playerRef = useRef<PCMStreamPlayer | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const inputCtxRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<any>(null);
-  const currentMentorTextRef = useRef<string>('');
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+// ─────────────────────────────────────────────────────────────────
+// COMPONENT
+// ─────────────────────────────────────────────────────────────────
+interface Props {
+  isOpen: boolean;
+  onClose: (transcript?: Array<{ sender: 'student' | 'mentor'; text: string }>) => void;
+  sessionId?: string;
+}
 
-  // Convert ArrayBuffer to Base64
-  const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    const chunk = 1024;
-    for (let i = 0; i < bytes.byteLength; i += chunk) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk) as any);
-    }
-    return window.btoa(binary);
-  };
+export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
+  const [status,   setStatus]   = useState('Starting...');
+  const [muted,    setMuted]    = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+  const [timer,    setTimer]    = useState(0);
+  const [lastLine, setLastLine] = useState('');
 
-  // Stop & cleanup call resources
-  const terminateCall = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+  // Refs — never trigger re-renders
+  const wsRef        = useRef<WebSocket | null>(null);
+  const playerRef    = useRef<PCMPlayer | null>(null);
+  const streamRef    = useRef<MediaStream | null>(null);
+  const inCtxRef     = useRef<AudioContext | null>(null);
+  const workletRef   = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
+  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mutedRef     = useRef(false);
+  const transcriptRef = useRef<Array<{ sender: 'student' | 'mentor'; text: string }>>([]);
+  const currentMentorRef = useRef('');
 
-    if (processorRef.current) {
+  // Keep mutedRef in sync without causing re-renders
+  mutedRef.current = muted;
+
+  // ── Cleanup ──────────────────────────────────────────────────
+  const cleanup = useCallback(() => {
+    timerRef.current && clearInterval(timerRef.current);
+    timerRef.current = null;
+
+    try { workletRef.current?.disconnect(); } catch {}
+    workletRef.current = null;
+
+    try { inCtxRef.current?.close(); } catch {}
+    inCtxRef.current = null;
+
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+
+    playerRef.current?.close();
+    playerRef.current = null;
+
+    try { wsRef.current?.close(); } catch {}
+    wsRef.current = null;
+
+    setSpeaking(false);
+  }, []);
+
+  // ── Mic recording with AudioWorklet ─────────────────────────
+  const startMic = useCallback(async (stream: MediaStream, ws: WebSocket) => {
+    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new Ctx({ sampleRate: MIC_SAMPLE_RATE });
+    inCtxRef.current = ctx;
+    const src = ctx.createMediaStreamSource(stream);
+
+    const sendPCM = (buf: Float32Array) => {
+      if (mutedRef.current || ws.readyState !== WebSocket.OPEN) return;
+      const gate = playerRef.current?.playing ? AI_ECHO_GATE : QUIET_THRESHOLD;
+      if (rms(buf) < gate) return;
       try {
-        processorRef.current.disconnect();
+        ws.send(JSON.stringify({
+          realtimeInput: {
+            audio: { mimeType: `audio/pcm;rate=${MIC_SAMPLE_RATE}`, data: f32ToB64(buf) }
+          }
+        }));
       } catch {}
-      processorRef.current = null;
-    }
-
-    if (inputCtxRef.current) {
-      try {
-        inputCtxRef.current.close();
-      } catch {}
-      inputCtxRef.current = null;
-    }
-
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    if (playerRef.current) {
-      playerRef.current.close();
-      playerRef.current = null;
-    }
-
-    if (wsRef.current) {
-      try {
-        wsRef.current.close();
-      } catch {}
-      wsRef.current = null;
-    }
-
-    setIsSpeaking(false);
-  };
-
-  // Start Mic Recording at 16 kHz
-  const startMicRecording = async (stream: MediaStream, ws: WebSocket) => {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    const inputCtx = new AudioCtx({ sampleRate: 16000 });
-    inputCtxRef.current = inputCtx;
-
-    const source = inputCtx.createMediaStreamSource(stream);
-
-    const processAudioBuffer = (channelData: Float32Array) => {
-      if (isMutedRef.current || ws.readyState !== WebSocket.OPEN) return;
-
-      // RMS calculation
-      let sum = 0;
-      for (let i = 0; i < channelData.length; i++) {
-        sum += channelData[i] * channelData[i];
-      }
-      const rms = Math.sqrt(sum / channelData.length);
-
-      // Gate mic transmission while AI is speaking to prevent self-interruption echo
-      const isAiTalking = playerRef.current?.isPlaying || false;
-      const threshold = isAiTalking ? 0.05 : 0.003;
-
-      if (rms < threshold) return;
-
-      const pcm16 = new Int16Array(channelData.length);
-      for (let i = 0; i < channelData.length; i++) {
-        const s = Math.max(-1, Math.min(1, channelData[i]));
-        pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-      }
-
-      const base64 = arrayBufferToBase64(pcm16.buffer);
-      try {
-        ws.send(
-          JSON.stringify({
-            realtimeInput: {
-              audio: {
-                mimeType: 'audio/pcm;rate=16000',
-                data: base64,
-              },
-            },
-          })
-        );
-      } catch (err) {
-        console.error('Failed to send mic PCM:', err);
-      }
     };
 
-    if ('audioWorklet' in inputCtx) {
+    // Prefer AudioWorklet (modern, non-blocking)
+    if (ctx.audioWorklet) {
       try {
-        const workletCode = `
-          class PCMProcessor extends AudioWorkletProcessor {
-            process(inputs) {
-              const input = inputs[0];
-              if (input && input[0] && input[0].length > 0) {
-                this.port.postMessage(input[0]);
-              }
-              return true;
-            }
-          }
-          registerProcessor('pcm-processor', PCMProcessor);
-        `;
-        const blob = new Blob([workletCode], { type: 'application/javascript' });
-        const url = URL.createObjectURL(blob);
-        await inputCtx.audioWorklet.addModule(url);
+        const code = `class P extends AudioWorkletProcessor{process(i){if(i[0]&&i[0][0])this.port.postMessage(i[0][0]);return true}}registerProcessor('p',P)`;
+        const blob = new Blob([code], { type: 'application/javascript' });
+        const url  = URL.createObjectURL(blob);
+        await ctx.audioWorklet.addModule(url);
         URL.revokeObjectURL(url);
 
-        const workletNode = new AudioWorkletNode(inputCtx, 'pcm-processor');
-        processorRef.current = workletNode;
+        const node = new AudioWorkletNode(ctx, 'p');
+        workletRef.current = node;
+        node.port.onmessage = (e: MessageEvent<Float32Array>) => sendPCM(e.data);
 
-        workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-          processAudioBuffer(e.data);
-        };
-
-        source.connect(workletNode);
-        const silentGain = inputCtx.createGain();
-        silentGain.gain.value = 0;
-        workletNode.connect(silentGain);
-        silentGain.connect(inputCtx.destination);
+        src.connect(node);
+        // Pipe to a silent gain to keep the graph alive
+        const g = ctx.createGain(); g.gain.value = 0;
+        node.connect(g); g.connect(ctx.destination);
         return;
       } catch (e) {
-        console.warn('AudioWorklet fallback to ScriptProcessor:', e);
+        console.warn('AudioWorklet failed, falling back:', e);
       }
     }
 
-    const processor = inputCtx.createScriptProcessor(1024, 1, 1);
-    processorRef.current = processor;
-    source.connect(processor);
+    // Fallback: ScriptProcessor (deprecated but universally supported)
+    const sp = ctx.createScriptProcessor(1024, 1, 1);
+    workletRef.current = sp as any;
+    src.connect(sp);
+    const g = ctx.createGain(); g.gain.value = 0;
+    sp.connect(g); g.connect(ctx.destination);
+    sp.onaudioprocess = (e: AudioProcessingEvent) => sendPCM(e.inputBuffer.getChannelData(0));
+  }, []);
 
-    const silentGain = inputCtx.createGain();
-    silentGain.gain.value = 0;
-    processor.connect(silentGain);
-    silentGain.connect(inputCtx.destination);
-
-    processor.onaudioprocess = (e: AudioProcessingEvent) => {
-      processAudioBuffer(e.inputBuffer.getChannelData(0));
-    };
-  };
-
-  // Connect to Gemini Live WS
-  const connectLiveSession = async () => {
+  // ── Main connect logic ───────────────────────────────────────
+  const connect = useCallback(async () => {
     setStatus('Connecting to Devika...');
-    setCallDuration(0);
-    setTranscript([]);
+    setTimer(0);
+    setLastLine('');
+    transcriptRef.current = [];
+    currentMentorRef.current = '';
 
-    playerRef.current = new PCMStreamPlayer((playing) => {
-      setIsSpeaking(playing);
-      if (playing) {
-        setStatus('Devika is speaking...');
-      } else {
-        setStatus('Listening...');
-      }
+    playerRef.current = new PCMPlayer(playing => {
+      setSpeaking(playing);
+      setStatus(playing ? 'Devika is speaking...' : 'Listening...');
     });
     playerRef.current.init();
 
     try {
-      const { apiKey, systemInstruction } = await AIService.getLiveConfig(sessionId || null);
+      // 1. Get ephemeral token + full CA mentor system instruction from backend
+      const { apiKey, systemInstruction, initialMessage } = await AIService.getLiveConfig(sessionId || null);
+      if (!apiKey) throw new Error('No API key returned');
 
+      // 2. Get mic stream
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,
-          sampleRate: 16000,
+          sampleRate: MIC_SAMPLE_RATE,
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
-        },
+        }
       });
       streamRef.current = stream;
 
-      const cleanToken = apiKey ? apiKey.replace(/^auth_tokens\//, '') : '';
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURIComponent(cleanToken)}`;
-      const ws = new WebSocket(wsUrl);
+      // 3. Open Gemini Live WebSocket
+      const token = apiKey.replace(/^auth_tokens\//, '');
+      // Gemini 2.5 Flash native audio Live API endpoint
+      const ws = new WebSocket(
+        `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=${encodeURIComponent(token)}`
+      );
       wsRef.current = ws;
+      ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
-        setStatus('Initializing Devika...');
-        const setupPayload = {
+        setStatus('Setting up Devika...');
+        // 4. Send setup — model, audio config, CA mentor system prompt
+        ws.send(JSON.stringify({
           setup: {
-            model: 'models/gemini-2.5-flash-native-audio-latest',
+            model: GEMINI_MODEL,
             generationConfig: {
               responseModalities: ['AUDIO'],
               speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: {
-                    voiceName: 'Aoede',
-                  },
-                },
-              },
+                voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } }
+              }
             },
-            systemInstruction: systemInstruction ? { parts: [{ text: systemInstruction }] } : undefined,
-          },
-        };
-        ws.send(JSON.stringify(setupPayload));
+            systemInstruction: systemInstruction
+              ? { parts: [{ text: systemInstruction }] }
+              : undefined,
+          }
+        }));
       };
 
       ws.onmessage = async (event: MessageEvent) => {
         if (ws !== wsRef.current) return;
         try {
-          let text = '';
+          let raw = '';
           if (typeof event.data === 'string') {
-            text = event.data;
-          } else if (event.data instanceof Blob) {
-            text = await event.data.text();
+            raw = event.data;
           } else if (event.data instanceof ArrayBuffer) {
-            text = new TextDecoder().decode(event.data);
+            raw = new TextDecoder().decode(event.data);
+          } else if (event.data instanceof Blob) {
+            raw = await event.data.text();
           }
 
-          const msg = JSON.parse(text);
+          const msg = JSON.parse(raw);
 
+          // ── setupComplete: session is ready, start mic + say hello ──
           if (msg.setupComplete !== undefined) {
-            startMicRecording(stream, ws);
-            setStatus('Devika is joining...');
+            await startMic(stream, ws);
 
             // Start call timer
-            timerRef.current = setInterval(() => {
-              setCallDuration((prev) => prev + 1);
-            }, 1000);
+            timerRef.current = setInterval(() => setTimer(t => t + 1), 1000);
 
-            // Initial prompt
-            ws.send(
-              JSON.stringify({
-                clientContent: {
-                  turns: [{ role: 'user', parts: [{ text: 'Hello Devika! Let us start.' }] }],
-                  turnComplete: true,
-                },
-              })
-            );
+            // Kick off the session with the backend-generated greeting or default
+            const greeting = initialMessage || `Hello! I'm Devika, your personal CA Foundation tutor. What would you like to study today?`;
+            ws.send(JSON.stringify({
+              clientContent: {
+                turns: [{ role: 'user', parts: [{ text: greeting }] }],
+                turnComplete: true,
+              }
+            }));
+            setStatus('Connected. Devika is joining...');
             return;
           }
 
+          // ── serverContent: audio + text chunks from Gemini ──
           if (msg.serverContent) {
             const { modelTurn, turnComplete, interrupted } = msg.serverContent;
 
             if (interrupted) {
               playerRef.current?.stop();
-              currentMentorTextRef.current = '';
+              currentMentorRef.current = '';
               setStatus('Listening...');
               return;
             }
 
-            if (modelTurn && modelTurn.parts) {
+            if (modelTurn?.parts) {
               for (const part of modelTurn.parts) {
-                if (part.inlineData && part.inlineData.data) {
+                // Play audio chunk immediately
+                if (part.inlineData?.data) {
                   playerRef.current?.playChunk(part.inlineData.data);
                 }
+                // Accumulate text for transcript display
                 if (part.text) {
-                  const cleanTextChunk = part.text.replace(/\*\*.*?\*\*/g, '').trim();
-                  if (cleanTextChunk) {
-                    currentMentorTextRef.current += (currentMentorTextRef.current ? ' ' : '') + cleanTextChunk;
-                    const newText = currentMentorTextRef.current;
-                    setTranscript((prev) => {
-                      const last = prev[prev.length - 1];
-                      if (last && last.sender === 'mentor') {
-                        return [...prev.slice(0, -1), { sender: 'mentor', text: newText }];
-                      } else {
-                        return [...prev, { sender: 'mentor', text: newText }];
-                      }
-                    });
+                  const chunk = part.text.replace(/\*\*.*?\*\*/g, '').trim();
+                  if (chunk) {
+                    currentMentorRef.current += (currentMentorRef.current ? ' ' : '') + chunk;
+                    setLastLine(currentMentorRef.current);
                   }
                 }
               }
             }
 
             if (turnComplete) {
-              currentMentorTextRef.current = '';
+              // Save completed mentor turn to transcript
+              if (currentMentorRef.current) {
+                transcriptRef.current.push({ sender: 'mentor', text: currentMentorRef.current });
+                currentMentorRef.current = '';
+              }
               setStatus('Listening...');
             }
           }
+
+          // ── inputTranscription: what student said ──
+          if (msg.inputTranscription?.text) {
+            const studentText = msg.inputTranscription.text.trim();
+            if (studentText) {
+              transcriptRef.current.push({ sender: 'student', text: studentText });
+              setLastLine(`You: ${studentText}`);
+            }
+          }
+
         } catch (err) {
-          console.error('Error handling live WS message:', err);
+          console.error('WS message error:', err);
         }
       };
 
       ws.onerror = (e) => {
-        console.error('Live WS Error:', e);
-        setStatus('Connection error. Retrying...');
+        console.error('Gemini Live WS error:', e);
+        setStatus('Connection error. Check network or API key.');
       };
 
       ws.onclose = (e) => {
         if (ws !== wsRef.current) return;
-        console.log('Live WS Closed:', e.code, e.reason);
-        setStatus('Call ended.');
+        console.log('Gemini Live WS closed:', e.code, e.reason);
+        setStatus(e.wasClean ? 'Call ended.' : `Disconnected (${e.code}).`);
       };
-    } catch (err) {
-      console.error('Failed to start Live Call:', err);
-      setStatus('Failed to connect to mic or Devika.');
-    }
-  };
 
+    } catch (err: any) {
+      console.error('Failed to start Live Call:', err);
+      setStatus(`Error: ${err?.message || 'Could not connect.'}`);
+    }
+  }, [sessionId, startMic]);
+
+  // ── Effect: mount/unmount ────────────────────────────────────
   useEffect(() => {
     if (isOpen) {
-      connectLiveSession();
+      connect();
     } else {
-      terminateCall();
+      cleanup();
     }
-
-    return () => {
-      terminateCall();
-    };
+    return () => cleanup();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  // ── End call handler ─────────────────────────────────────────
+  const handleEnd = useCallback(() => {
+    const final = [...transcriptRef.current];
+    if (sessionId && final.length > 0) {
+      AIService.logVoiceSession(sessionId, final).catch(console.error);
+    }
+    cleanup();
+    onClose(final);
+  }, [sessionId, cleanup, onClose]);
 
   if (!isOpen) return null;
 
-  const formatTimer = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const handleEndCall = () => {
-    const finalTranscript = [...transcript];
-    if (sessionId && finalTranscript.length > 0) {
-      AIService.logVoiceSession(sessionId, finalTranscript).catch(console.error);
-    }
-    terminateCall();
-    onClose(finalTranscript);
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
-      <div className="relative w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-3xl p-6 sm:p-8 flex flex-col items-center justify-between min-h-[500px] shadow-2xl overflow-hidden">
-        
-        {/* Ambient Glow */}
-        <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 rounded-full filter blur-3xl opacity-25 transition-all duration-700 pointer-events-none ${
-          isSpeaking ? 'bg-emerald-500 scale-125' : 'bg-indigo-500 scale-100'
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
+      <div className="relative w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-8 flex flex-col items-center gap-6 shadow-2xl overflow-hidden">
+
+        {/* Ambient glow */}
+        <div className={`absolute inset-0 pointer-events-none transition-all duration-700 ${
+          speaking
+            ? 'bg-gradient-radial from-emerald-900/30 to-transparent'
+            : 'bg-gradient-radial from-indigo-900/20 to-transparent'
         }`} />
 
-        {/* Header info */}
-        <div className="relative z-10 w-full flex items-center justify-between text-xs font-semibold text-zinc-400">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-zinc-200 font-bold uppercase tracking-wider">Devika Live AI</span>
-          </div>
-          <div className="px-3 py-1 bg-zinc-800/80 rounded-full font-mono text-zinc-300 border border-zinc-700/50">
-            {formatTimer(callDuration)}
-          </div>
+        {/* Timer */}
+        <div className="relative z-10 self-end px-3 py-1 bg-zinc-800 rounded-full text-xs font-mono text-zinc-300 border border-zinc-700">
+          {fmt(timer)}
         </div>
 
-        {/* Avatar & Waveform Animation */}
-        <div className="relative z-10 flex flex-col items-center my-auto py-8">
+        {/* Avatar */}
+        <div className="relative z-10 flex flex-col items-center gap-4">
           <div className="relative flex items-center justify-center">
-            {/* Pulsing rings when speaking */}
-            {isSpeaking && (
+            {speaking && (
               <>
-                <div className="absolute w-40 h-40 rounded-full border-2 border-emerald-500/40 animate-ping" />
-                <div className="absolute w-48 h-48 rounded-full border border-emerald-500/20 animate-pulse" />
+                <div className="absolute w-36 h-36 rounded-full border-2 border-emerald-500/40 animate-ping" />
+                <div className="absolute w-44 h-44 rounded-full border border-emerald-500/20 animate-pulse" />
               </>
             )}
-            
-            <div className={`w-28 h-28 rounded-full flex items-center justify-center border-2 transition-all duration-300 shadow-xl ${
-              isSpeaking 
-                ? 'bg-emerald-950/80 border-emerald-400 shadow-emerald-500/20' 
-                : 'bg-zinc-800 border-zinc-700 shadow-black/40'
+            <div className={`w-24 h-24 rounded-full flex items-center justify-center border-2 shadow-xl transition-all duration-300 ${
+              speaking
+                ? 'bg-emerald-950 border-emerald-400 shadow-emerald-500/30'
+                : 'bg-zinc-800 border-zinc-700'
             }`}>
-              <Sparkles className={`w-12 h-12 transition-colors duration-300 ${
-                isSpeaking ? 'text-emerald-400 animate-bounce' : 'text-indigo-400'
+              <Sparkles className={`w-10 h-10 transition-colors duration-300 ${
+                speaking ? 'text-emerald-400' : 'text-indigo-400'
               }`} />
             </div>
           </div>
 
-          <h3 className="mt-6 text-xl font-extrabold text-white tracking-tight">Devika</h3>
-          <p className="mt-1 text-sm font-medium text-emerald-400/90">{status}</p>
+          <div className="text-center">
+            <p className="text-white font-bold text-xl tracking-tight">Devika</p>
+            <p className="text-xs font-semibold uppercase tracking-widest text-emerald-400/80 mt-0.5">
+              CA Foundation Personal Mentor
+            </p>
+          </div>
 
-          {/* Transcript Snippet */}
-          {transcript.length > 0 && (
-            <div className="mt-4 max-h-24 overflow-y-auto px-4 py-2 bg-zinc-950/60 rounded-xl border border-zinc-800/80 text-xs text-zinc-300 text-center max-w-xs leading-relaxed">
-              "{transcript[transcript.length - 1].text}"
+          {/* Live status */}
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${speaking ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`} />
+            <p className="text-sm text-zinc-300">{status}</p>
+          </div>
+
+          {/* Last line of conversation */}
+          {lastLine && (
+            <div className="max-w-xs px-4 py-2 bg-zinc-950/70 rounded-xl border border-zinc-800 text-xs text-zinc-300 text-center leading-relaxed">
+              &ldquo;{lastLine}&rdquo;
             </div>
           )}
         </div>
 
-        {/* Bottom Call Controls */}
-        <div className="relative z-10 w-full flex items-center justify-center gap-6 pt-4 border-t border-zinc-800/60">
+        {/* Controls */}
+        <div className="relative z-10 w-full flex items-center justify-center gap-6 pt-4 border-t border-zinc-800">
           <button
-            onClick={() => setIsMuted(!isMuted)}
-            className={`p-4 rounded-full transition-colors cursor-pointer border ${
-              isMuted
-                ? 'bg-red-500/20 border-red-500/50 text-red-400 hover:bg-red-500/30'
+            onClick={() => setMuted(m => !m)}
+            className={`p-4 rounded-full border transition-colors ${
+              muted
+                ? 'bg-red-500/20 border-red-500/50 text-red-400'
                 : 'bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700'
             }`}
-            title={isMuted ? 'Unmute Microphone' : 'Mute Microphone'}
+            title={muted ? 'Unmute' : 'Mute'}
           >
-            {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
+            {muted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
           </button>
 
           <button
-            onClick={handleEndCall}
-            className="p-4 rounded-full bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer shadow-lg shadow-red-600/30"
-            title="End Voice Call"
+            onClick={handleEnd}
+            className="p-4 rounded-full bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30 transition-colors"
+            title="End Call"
           >
             <PhoneOff className="w-6 h-6" />
           </button>
