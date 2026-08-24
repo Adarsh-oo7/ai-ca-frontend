@@ -51,11 +51,18 @@ export const AIService = {
       : '/api/ai/chat/get_api_key/';
     const response = await api.get(url);
     return {
+      ready: Boolean(response.data.ready ?? response.data.system_instruction),
       apiKey: response.data.api_key,
       systemInstruction: response.data.system_instruction,
       initialMessage: response.data.initial_message || null,
       langCode: response.data.lang_code || 'en',
+      speechLanguage: response.data.speech_language || 'en-IN',
     };
+  },
+
+  async runLiveTool(name: string, args: Record<string, unknown> = {}) {
+    const response = await api.post('/api/ai/chat/live_tool/', { name, args });
+    return response.data;
   },
 
   async logVoiceSession(sessionId: string, turns: Array<{ sender: 'student' | 'mentor'; text: string }>) {

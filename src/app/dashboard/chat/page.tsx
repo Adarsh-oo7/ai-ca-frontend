@@ -521,16 +521,27 @@ export default function ChatPage() {
 
     if (!cleanText) return;
 
-    const voiceName = "Aoede";
+    const fallbackSpeak = () => {
+      if (!window.speechSynthesis) return;
+      const utterance = new SpeechSynthesisUtterance(cleanText.slice(0, 4000));
+      utterance.lang = (userLanguage === 'ml' || userLanguage === 'manglish') ? 'en-IN' : 'en-IN';
+      window.speechSynthesis.speak(utterance);
+    };
 
     try {
-      const audioBlob = await AIService.speak(cleanText, voiceName);
+      const audioBlob = await AIService.speak(cleanText, "Aoede");
+      if (!audioBlob || audioBlob.size < 64 || (audioBlob.type && audioBlob.type.includes('json'))) {
+        fallbackSpeak();
+        return;
+      }
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
       activeAudioRef.current = audio;
-      audio.play();
+      audio.onended = () => URL.revokeObjectURL(audioUrl);
+      await audio.play();
     } catch (err) {
       console.error("Failed to generate voice output:", err);
+      fallbackSpeak();
     }
   };
 
@@ -626,14 +637,16 @@ export default function ChatPage() {
 
       // Refresh sessions sidebar (title may have been auto-generated)
       loadChatSessions();
-    } catch (err) {
+    } catch (err: unknown) {
       console.error(err);
+      const axiosErr = err as { response?: { data?: { error?: string; detail?: string } } };
+      const serverMsg = axiosErr.response?.data?.error || axiosErr.response?.data?.detail;
       setMessages(prev => [
         ...prev,
         {
           id: generateUniqueId('error'),
           sender: 'mentor',
-          text: "Forgive me, I ran into an connection drop while searching the vector library. Please verify your internet and try again.",
+          text: serverMsg || "I could not reach the study library just now. Please wait a moment and ask again.",
           timestamp: new Date()
         }
       ]);
@@ -1022,13 +1035,13 @@ export default function ChatPage() {
             ))
           )}
         </div>
-        {/* Live Voice Modal */}
-        <LiveVoiceModal
-          isOpen={isLiveModalOpen}
-          onClose={handleVoiceModalClose}
-          sessionId={sessionId}
-        />
       </div>
+
+      <LiveVoiceModal
+        isOpen={isLiveModalOpen}
+        onClose={handleVoiceModalClose}
+        sessionId={sessionId}
+      />
 
     </div>
   );

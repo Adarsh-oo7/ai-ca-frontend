@@ -4,22 +4,40 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Mic, MicOff, PhoneOff, Sparkles } from 'lucide-react';
 import { AIService } from '@/services/ai.service';
 
-// ─────────────────────────────────────────────────────────────────
-// CONSTANTS
-// ─────────────────────────────────────────────────────────────────
-const MIC_SAMPLE_RATE   = 16000;   // Gemini requires 16 kHz input
-const OUT_SAMPLE_RATE   = 24000;   // Gemini outputs 24 kHz PCM
-const GEMINI_MODEL      = 'models/gemini-2.5-flash-native-audio-latest';
-const VOICE_NAME        = 'Aoede';
-const QUIET_THRESHOLD   = 0.003;   // RMS gate when student is talking
-const AI_ECHO_GATE      = 0.06;    // RMS gate when AI is speaking (blocks echo)
+const MIC_SAMPLE_RATE = 16000;
+const OUT_SAMPLE_RATE = 24000;
+const GEMINI_MODEL = 'models/gemini-2.5-flash-native-audio-latest';
+const FALLBACK_MODEL = 'models/gemini-live-2.5-flash-native-audio';
+const VOICE_NAME = 'Aoede';
+const QUIET_THRESHOLD = 0.002;
+const AI_ECHO_GATE = 0.02;
+const TARGET_CHUNK_SAMPLES = 640; // 40ms at 16 kHz
+const MAX_RECONNECTS = 4;
+const RECONNECT_BASE_MS = 800;
+const MAX_PLAYBACK_LAG = 0.18;
 
-const MAX_RECONNECTS    = 5;       // Max auto-reconnect attempts
-const RECONNECT_BASE_MS = 1500;    // Initial reconnect delay (doubles each attempt)
+function getLiveWsUrl(): string {
+  const explicit = process.env.NEXT_PUBLIC_WS_URL;
+  if (explicit) return explicit;
 
-// ─────────────────────────────────────────────────────────────────
-// PCM PLAYER  — gapless, no overlaps
-// ─────────────────────────────────────────────────────────────────
+  const api = process.env.NEXT_PUBLIC_API_URL || '';
+  if (api.startsWith('https://')) {
+    return `${api.replace(/^https:/, 'wss:').replace(/\/$/, '')}/ws/gemini-live/`;
+  }
+  if (api.startsWith('http://')) {
+    return `${api.replace(/^http:/, 'ws:').replace(/\/$/, '')}/ws/gemini-live/`;
+  }
+
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return 'ws://localhost:8765';
+    }
+    return 'wss://api-study.digitalproductsolutions.in/ws/gemini-live/';
+  }
+  return 'wss://api-study.digitalproductsolutions.in/ws/gemini-live/';
+}
+
 class PCMPlayer {
   private ctx: AudioContext | null = null;
   private nextTime = 0;
@@ -33,7 +51,7 @@ class PCMPlayer {
 
   init() {
     if (this.ctx) return;
-    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     this.ctx = new Ctx({ sampleRate: OUT_SAMPLE_RATE });
     this.nextTime = this.ctx.currentTime;
   }
@@ -44,10 +62,12 @@ class PCMPlayer {
     if (this.ctx.state === 'suspended') this.ctx.resume();
 
     try {
-      const raw   = atob(b64);
-      const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
-      const i16   = new Int16Array(bytes.buffer);
-      const f32   = new Float32Array(i16.length);
+      const raw = atob(b64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const evenLen = bytes.byteLength - (bytes.byteLength % 2);
+      const i16 = new Int16Array(bytes.buffer, bytes.byteOffset, evenLen / 2);
+      const f32 = new Float32Array(i16.length);
       for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768.0;
 
       const buf = this.ctx.createBuffer(1, f32.length, OUT_SAMPLE_RATE);
@@ -58,7 +78,7 @@ class PCMPlayer {
       src.connect(this.ctx.destination);
 
       src.onended = () => {
-        this.sources = this.sources.filter(s => s !== src);
+        this.sources = this.sources.filter((s) => s !== src);
         if (this.sources.length === 0) {
           this.playing = false;
           this.onChange?.(false);
@@ -66,7 +86,10 @@ class PCMPlayer {
       };
 
       const now = this.ctx.currentTime;
-      if (this.nextTime < now) this.nextTime = now + 0.01;
+      if (this.nextTime < now) this.nextTime = now;
+      if (this.nextTime - now > MAX_PLAYBACK_LAG) {
+        this.nextTime = now;
+      }
       src.start(this.nextTime);
       this.nextTime += buf.duration;
 
@@ -75,11 +98,19 @@ class PCMPlayer {
         this.playing = true;
         this.onChange?.(true);
       }
-    } catch {}
+    } catch {
+      /* skip corrupt chunk */
+    }
   }
 
   stop() {
-    this.sources.forEach(s => { try { s.stop(); } catch {} });
+    this.sources.forEach((s) => {
+      try {
+        s.stop();
+      } catch {
+        /* already stopped */
+      }
+    });
     this.sources = [];
     if (this.ctx) this.nextTime = this.ctx.currentTime;
     if (this.playing) {
@@ -90,14 +121,15 @@ class PCMPlayer {
 
   close() {
     this.stop();
-    try { this.ctx?.close(); } catch {}
+    try {
+      this.ctx?.close();
+    } catch {
+      /* ignore */
+    }
     this.ctx = null;
   }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────────────────────────
 function f32ToB64(f32: Float32Array): string {
   const i16 = new Int16Array(f32.length);
   for (let i = 0; i < f32.length; i++) {
@@ -120,13 +152,11 @@ function rms(buf: Float32Array): number {
 }
 
 function fmt(secs: number) {
-  const m = Math.floor(secs / 60), s = secs % 60;
-  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-// ─────────────────────────────────────────────────────────────────
-// COMPONENT
-// ─────────────────────────────────────────────────────────────────
 interface Props {
   isOpen: boolean;
   onClose: (transcript?: Array<{ sender: 'student' | 'mentor'; text: string }>) => void;
@@ -134,88 +164,117 @@ interface Props {
 }
 
 export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
-  const [status,   setStatus]   = useState('Starting...');
-  const [muted,    setMuted]    = useState(false);
+  const [status, setStatus] = useState('Starting...');
+  const [muted, setMuted] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  const [timer,    setTimer]    = useState(0);
+  const [timer, setTimer] = useState(0);
   const [lastLine, setLastLine] = useState('');
 
-  // Refs — never trigger re-renders
-  const wsRef        = useRef<WebSocket | null>(null);
-  const playerRef    = useRef<PCMPlayer | null>(null);
-  const streamRef    = useRef<MediaStream | null>(null);
-  const inCtxRef     = useRef<AudioContext | null>(null);
-  const workletRef   = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
-  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const mutedRef         = useRef(false);
-  const transcriptRef    = useRef<Array<{ sender: 'student' | 'mentor'; text: string }>>([]);
+  const wsRef = useRef<WebSocket | null>(null);
+  const playerRef = useRef<PCMPlayer | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const inCtxRef = useRef<AudioContext | null>(null);
+  const workletRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mutedRef = useRef(false);
+  const transcriptRef = useRef<Array<{ sender: 'student' | 'mentor'; text: string }>>([]);
   const currentMentorRef = useRef('');
-  const reconnectCount   = useRef(0);
-  const reconnectTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const keepAliveTimer   = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isClosingRef     = useRef(false);  // true = user pressed end call
+  const reconnectCount = useRef(0);
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isClosingRef = useRef(false);
+  const modelRef = useRef(GEMINI_MODEL);
+  const toolsEnabledRef = useRef(false);
+  const setupCompleteRef = useRef(false);
+  const pcmBufferRef = useRef<Float32Array[]>([]);
+  const pcmSamplesRef = useRef(0);
 
-  // Keep mutedRef in sync without causing re-renders
   mutedRef.current = muted;
 
-  // ── Cleanup ──────────────────────────────────────────────────
-  const cleanup = useCallback(() => {
-    isClosingRef.current = true;
-
+  const tearDownMedia = useCallback(() => {
     timerRef.current && clearInterval(timerRef.current);
     timerRef.current = null;
-
-    keepAliveTimer.current && clearInterval(keepAliveTimer.current);
-    keepAliveTimer.current = null;
-
-    reconnectTimer.current && clearTimeout(reconnectTimer.current);
-    reconnectTimer.current = null;
-
-    try { workletRef.current?.disconnect(); } catch {}
+    try {
+      workletRef.current?.disconnect();
+    } catch {
+      /* ignore */
+    }
     workletRef.current = null;
-
-    try { inCtxRef.current?.close(); } catch {}
+    try {
+      inCtxRef.current?.close();
+    } catch {
+      /* ignore */
+    }
     inCtxRef.current = null;
-
-    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-
     playerRef.current?.close();
     playerRef.current = null;
-
     const ws = wsRef.current;
     wsRef.current = null;
-    try { ws?.close(1000, 'User ended call'); } catch {}
-
+    try {
+      ws?.close(1000, 'cleanup');
+    } catch {
+      /* ignore */
+    }
     setSpeaking(false);
   }, []);
 
-  // ── Mic recording with AudioWorklet ─────────────────────────
+  const cleanup = useCallback(() => {
+    isClosingRef.current = true;
+    reconnectTimer.current && clearTimeout(reconnectTimer.current);
+    reconnectTimer.current = null;
+    tearDownMedia();
+  }, [tearDownMedia]);
+
   const startMic = useCallback(async (stream: MediaStream, ws: WebSocket) => {
-    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     const ctx = new Ctx({ sampleRate: MIC_SAMPLE_RATE });
     inCtxRef.current = ctx;
     const src = ctx.createMediaStreamSource(stream);
+    pcmBufferRef.current = [];
+    pcmSamplesRef.current = 0;
 
-    const sendPCM = (buf: Float32Array) => {
+    const flush = (force = false) => {
       if (mutedRef.current || ws.readyState !== WebSocket.OPEN) return;
+      if (!force && pcmSamplesRef.current < TARGET_CHUNK_SAMPLES) return;
+      if (pcmSamplesRef.current === 0) return;
+
+      const merged = new Float32Array(pcmSamplesRef.current);
+      let offset = 0;
+      for (const part of pcmBufferRef.current) {
+        merged.set(part, offset);
+        offset += part.length;
+      }
+      pcmBufferRef.current = [];
+      pcmSamplesRef.current = 0;
+
       const gate = playerRef.current?.playing ? AI_ECHO_GATE : QUIET_THRESHOLD;
-      if (rms(buf) < gate) return;
+      if (rms(merged) < gate) return;
       try {
-        ws.send(JSON.stringify({
-          realtimeInput: {
-            audio: { mimeType: `audio/pcm;rate=${MIC_SAMPLE_RATE}`, data: f32ToB64(buf) }
-          }
-        }));
-      } catch {}
+        ws.send(
+          JSON.stringify({
+            realtimeInput: {
+              audio: { mimeType: `audio/pcm;rate=${MIC_SAMPLE_RATE}`, data: f32ToB64(merged) },
+            },
+          })
+        );
+      } catch {
+        /* ignore */
+      }
     };
 
-    // Prefer AudioWorklet (modern, non-blocking)
+    const sendPCM = (buf: Float32Array) => {
+      const copy = new Float32Array(buf);
+      pcmBufferRef.current.push(copy);
+      pcmSamplesRef.current += copy.length;
+      flush(false);
+    };
+
     if (ctx.audioWorklet) {
       try {
         const code = `class P extends AudioWorkletProcessor{process(i){if(i[0]&&i[0][0])this.port.postMessage(i[0][0]);return true}}registerProcessor('p',P)`;
         const blob = new Blob([code], { type: 'application/javascript' });
-        const url  = URL.createObjectURL(blob);
+        const url = URL.createObjectURL(blob);
         await ctx.audioWorklet.addModule(url);
         URL.revokeObjectURL(url);
 
@@ -224,81 +283,136 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
         node.port.onmessage = (e: MessageEvent<Float32Array>) => sendPCM(e.data);
 
         src.connect(node);
-        // Pipe to a silent gain to keep the graph alive
-        const g = ctx.createGain(); g.gain.value = 0;
-        node.connect(g); g.connect(ctx.destination);
+        const g = ctx.createGain();
+        g.gain.value = 0;
+        node.connect(g);
+        g.connect(ctx.destination);
         return;
       } catch (e) {
         console.warn('AudioWorklet failed, falling back:', e);
       }
     }
 
-    // Fallback: ScriptProcessor (deprecated but universally supported)
     const sp = ctx.createScriptProcessor(1024, 1, 1);
-    workletRef.current = sp as any;
+    workletRef.current = sp;
     src.connect(sp);
-    const g = ctx.createGain(); g.gain.value = 0;
-    sp.connect(g); g.connect(ctx.destination);
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    sp.connect(g);
+    g.connect(ctx.destination);
     sp.onaudioprocess = (e: AudioProcessingEvent) => sendPCM(e.inputBuffer.getChannelData(0));
   }, []);
 
-  // ── Main connect logic ───────────────────────────────────────
+  const handleToolCalls = useCallback(async (ws: WebSocket, toolCall: { functionCalls?: Array<{ id?: string; name?: string; args?: Record<string, unknown> }> }) => {
+    const calls = toolCall?.functionCalls || [];
+    if (!calls.length || ws.readyState !== WebSocket.OPEN) return;
+    setStatus('Looking up your ICAI notes...');
+    const functionResponses = [];
+    for (const call of calls) {
+      const name = call.name || '';
+      try {
+        const result = await AIService.runLiveTool(name, call.args || {});
+        functionResponses.push({
+          id: call.id,
+          name,
+          response: result,
+        });
+      } catch {
+        functionResponses.push({
+          id: call.id,
+          name,
+          response: { error: 'tool failed' },
+        });
+      }
+    }
+    try {
+      ws.send(JSON.stringify({ toolResponse: { functionResponses } }));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const connect = useCallback(async () => {
     setStatus('Connecting to Devika...');
     setTimer(0);
     setLastLine('');
-    transcriptRef.current = [];
+    if (reconnectCount.current === 0) {
+      transcriptRef.current = [];
+    }
     currentMentorRef.current = '';
     isClosingRef.current = false;
-    // Don't reset reconnectCount here — it accumulates across reconnects
+    setupCompleteRef.current = false;
 
-    playerRef.current = new PCMPlayer(playing => {
+    playerRef.current = new PCMPlayer((playing) => {
       setSpeaking(playing);
       setStatus(playing ? 'Devika is speaking...' : 'Listening...');
     });
     playerRef.current.init();
 
     try {
-      // 1. Get ephemeral token + full CA mentor system instruction from backend
-      const { apiKey, systemInstruction, initialMessage } = await AIService.getLiveConfig(sessionId || null);
-      if (!apiKey) throw new Error('No API key returned');
-
-      // 2. Get mic stream
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: MIC_SAMPLE_RATE,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        }
-      });
+      const [config, stream] = await Promise.all([
+        AIService.getLiveConfig(sessionId || null),
+        navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: MIC_SAMPLE_RATE,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        }),
+      ]);
+      if (!config.systemInstruction) throw new Error('Live mentor config missing');
       streamRef.current = stream;
 
-      // 3. Open WebSocket to our backend proxy (which connects to Gemini server-to-server)
-      // This avoids exposing any API key in the browser.
-      const wsUrl = `wss://api-study.digitalproductsolutions.in/ws/gemini-live/`;
+      const wsUrl = getLiveWsUrl();
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       ws.binaryType = 'arraybuffer';
 
       ws.onopen = () => {
         setStatus('Setting up Devika...');
-        // 4. Send setup — model, audio config, CA mentor system prompt
-        ws.send(JSON.stringify({
-          setup: {
-            model: GEMINI_MODEL,
-            generationConfig: {
-              responseModalities: ['AUDIO'],
-              speechConfig: {
-                voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } }
-              }
+        const setup: Record<string, unknown> = {
+          model: modelRef.current,
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } },
             },
-            systemInstruction: systemInstruction
-              ? { parts: [{ text: systemInstruction }] }
-              : undefined,
-          }
-        }));
+          },
+          systemInstruction: {
+            parts: [{ text: config.systemInstruction }],
+          },
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
+          contextWindowCompression: { slidingWindow: {} },
+        };
+        if (toolsEnabledRef.current) {
+          setup.tools = [
+            {
+              functionDeclarations: [
+                {
+                  name: 'search_icai_library',
+                  description: 'Search ICAI study material for a concept or chapter.',
+                  parameters: {
+                    type: 'OBJECT',
+                    properties: {
+                      query: { type: 'STRING' },
+                      subject: { type: 'STRING' },
+                    },
+                    required: ['query'],
+                  },
+                },
+                {
+                  name: 'get_student_study_status',
+                  description: 'Get what this student recently studied and revisions due.',
+                  parameters: { type: 'OBJECT', properties: {} },
+                },
+              ],
+            },
+          ];
+        }
+        ws.send(JSON.stringify({ setup }));
       };
 
       ws.onmessage = async (event: MessageEvent) => {
@@ -315,26 +429,30 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
 
           const msg = JSON.parse(raw);
 
-          // ── setupComplete: session is ready, start mic + say hello ──
           if (msg.setupComplete !== undefined) {
+            setupCompleteRef.current = true;
             await startMic(stream, ws);
-
-            // Start call timer
-            timerRef.current = setInterval(() => setTimer(t => t + 1), 1000);
-
-            // Kick off the session with the backend-generated greeting or default
-            const greeting = initialMessage || `Hello! I'm Devika, your personal CA Foundation tutor. What would you like to study today?`;
-            ws.send(JSON.stringify({
-              clientContent: {
-                turns: [{ role: 'user', parts: [{ text: greeting }] }],
-                turnComplete: true,
-              }
-            }));
-            setStatus('Connected. Devika is joining...');
+            reconnectCount.current = 0;
+            timerRef.current && clearInterval(timerRef.current);
+            timerRef.current = setInterval(() => setTimer((t) => t + 1), 1000);
+            try {
+              ws.send(JSON.stringify({ realtimeInput: { text: 'Hi' } }));
+            } catch {
+              /* ignore */
+            }
+            setStatus('Listening...');
             return;
           }
 
-          // ── serverContent: audio + text chunks from Gemini ──
+          if (msg.toolCall) {
+            await handleToolCalls(ws, msg.toolCall);
+          }
+
+          if (msg.goAway) {
+            setStatus('Session wrapping up. Reconnecting...');
+            return;
+          }
+
           if (msg.serverContent) {
             const { modelTurn, turnComplete, interrupted } = msg.serverContent;
 
@@ -347,11 +465,9 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
 
             if (modelTurn?.parts) {
               for (const part of modelTurn.parts) {
-                // Play audio chunk immediately
                 if (part.inlineData?.data) {
                   playerRef.current?.playChunk(part.inlineData.data);
                 }
-                // Accumulate text for transcript display
                 if (part.text) {
                   const chunk = part.text.replace(/\*\*.*?\*\*/g, '').trim();
                   if (chunk) {
@@ -363,7 +479,6 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
             }
 
             if (turnComplete) {
-              // Save completed mentor turn to transcript
               if (currentMentorRef.current) {
                 transcriptRef.current.push({ sender: 'mentor', text: currentMentorRef.current });
                 currentMentorRef.current = '';
@@ -372,7 +487,14 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
             }
           }
 
-          // ── inputTranscription: what student said ──
+          if (msg.outputTranscription?.text) {
+            const t = msg.outputTranscription.text.trim();
+            if (t) {
+              currentMentorRef.current += (currentMentorRef.current ? ' ' : '') + t;
+              setLastLine(currentMentorRef.current);
+            }
+          }
+
           if (msg.inputTranscription?.text) {
             const studentText = msg.inputTranscription.text.trim();
             if (studentText) {
@@ -380,7 +502,6 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
               setLastLine(`You: ${studentText}`);
             }
           }
-
         } catch (err) {
           console.error('WS message error:', err);
         }
@@ -388,58 +509,61 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
 
       ws.onerror = (e) => {
         console.error('Gemini Live WS error:', e);
-        // Don't show error if we're already reconnecting
+        setStatus('Connection error. Retrying...');
       };
 
       ws.onclose = (e) => {
         if (ws !== wsRef.current) return;
-        console.log('Gemini Live WS closed:', e.code, e.reason);
-
-        // Stop keep-alive ping
-        keepAliveTimer.current && clearInterval(keepAliveTimer.current);
-        keepAliveTimer.current = null;
-
-        // Code 1000 = normal close (user pressed End Call)
-        // isClosingRef = user intentionally ended
         if (isClosingRef.current || e.code === 1000) {
           setStatus('Call ended.');
           return;
         }
 
-        // Unexpected drop — auto-reconnect
+        if (reconnectCount.current === 0 && modelRef.current === GEMINI_MODEL) {
+          modelRef.current = FALLBACK_MODEL;
+        }
+        if (!setupCompleteRef.current && toolsEnabledRef.current) {
+          toolsEnabledRef.current = false;
+        }
+
         if (reconnectCount.current < MAX_RECONNECTS) {
-          reconnectCount.current++;
+          reconnectCount.current += 1;
           const delay = RECONNECT_BASE_MS * Math.pow(2, reconnectCount.current - 1);
-          setStatus(`Connection lost. Reconnecting in ${Math.round(delay / 1000)}s... (${reconnectCount.current}/${MAX_RECONNECTS})`);
+          setStatus(`Connection lost. Reconnecting (${reconnectCount.current}/${MAX_RECONNECTS})...`);
           reconnectTimer.current = setTimeout(() => {
-            if (!isClosingRef.current) connect();
+            if (!isClosingRef.current) {
+              tearDownMedia();
+              connect();
+            }
           }, delay);
         } else {
-          setStatus('Disconnected. Please end and restart the call.');
+          setStatus('Could not stay connected. End the call and try again.');
         }
       };
-
-      // Gemini Live WS stays alive as long as mic PCM data is flowing.
-      // No keep-alive ping needed — invalid messages cause immediate disconnects.
-
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Could not connect.';
       console.error('Failed to start Live Call:', err);
-      setStatus(`Error: ${err?.message || 'Could not connect.'}`);
+      if (message.toLowerCase().includes('permission') || message.toLowerCase().includes('denied')) {
+        setStatus('Microphone permission is required for Live Talk.');
+      } else {
+        setStatus(`Error: ${message}`);
+      }
     }
-  }, [sessionId, startMic]);
+  }, [sessionId, startMic, handleToolCalls, tearDownMedia]);
 
-  // ── Effect: mount/unmount ────────────────────────────────────
   useEffect(() => {
     if (isOpen) {
+      reconnectCount.current = 0;
+      modelRef.current = GEMINI_MODEL;
+      toolsEnabledRef.current = false;
       connect();
     } else {
       cleanup();
     }
     return () => cleanup();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // ── End call handler ─────────────────────────────────────────
   const handleEnd = useCallback(() => {
     const final = [...transcriptRef.current];
     reconnectCount.current = 0;
@@ -455,20 +579,16 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm p-4">
       <div className="relative w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-8 flex flex-col items-center gap-6 shadow-2xl overflow-hidden">
+        <div
+          className={`absolute inset-0 pointer-events-none transition-all duration-700 ${
+            speaking ? 'bg-gradient-radial from-emerald-900/30 to-transparent' : 'bg-gradient-radial from-indigo-900/20 to-transparent'
+          }`}
+        />
 
-        {/* Ambient glow */}
-        <div className={`absolute inset-0 pointer-events-none transition-all duration-700 ${
-          speaking
-            ? 'bg-gradient-radial from-emerald-900/30 to-transparent'
-            : 'bg-gradient-radial from-indigo-900/20 to-transparent'
-        }`} />
-
-        {/* Timer */}
         <div className="relative z-10 self-end px-3 py-1 bg-zinc-800 rounded-full text-xs font-mono text-zinc-300 border border-zinc-700">
           {fmt(timer)}
         </div>
 
-        {/* Avatar */}
         <div className="relative z-10 flex flex-col items-center gap-4">
           <div className="relative flex items-center justify-center">
             {speaking && (
@@ -477,14 +597,12 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
                 <div className="absolute w-44 h-44 rounded-full border border-emerald-500/20 animate-pulse" />
               </>
             )}
-            <div className={`w-24 h-24 rounded-full flex items-center justify-center border-2 shadow-xl transition-all duration-300 ${
-              speaking
-                ? 'bg-emerald-950 border-emerald-400 shadow-emerald-500/30'
-                : 'bg-zinc-800 border-zinc-700'
-            }`}>
-              <Sparkles className={`w-10 h-10 transition-colors duration-300 ${
-                speaking ? 'text-emerald-400' : 'text-indigo-400'
-              }`} />
+            <div
+              className={`w-24 h-24 rounded-full flex items-center justify-center border-2 shadow-xl transition-all duration-300 ${
+                speaking ? 'bg-emerald-950 border-emerald-400 shadow-emerald-500/30' : 'bg-zinc-800 border-zinc-700'
+              }`}
+            >
+              <Sparkles className={`w-10 h-10 transition-colors duration-300 ${speaking ? 'text-emerald-400' : 'text-indigo-400'}`} />
             </div>
           </div>
 
@@ -495,13 +613,11 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
             </p>
           </div>
 
-          {/* Live status */}
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${speaking ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`} />
-            <p className="text-sm text-zinc-300">{status}</p>
+            <p className="text-sm text-zinc-300 text-center">{status}</p>
           </div>
 
-          {/* Last line of conversation */}
           {lastLine && (
             <div className="max-w-xs px-4 py-2 bg-zinc-950/70 rounded-xl border border-zinc-800 text-xs text-zinc-300 text-center leading-relaxed">
               &ldquo;{lastLine}&rdquo;
@@ -509,14 +625,11 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
           )}
         </div>
 
-        {/* Controls */}
         <div className="relative z-10 w-full flex items-center justify-center gap-6 pt-4 border-t border-zinc-800">
           <button
-            onClick={() => setMuted(m => !m)}
+            onClick={() => setMuted((m) => !m)}
             className={`p-4 rounded-full border transition-colors ${
-              muted
-                ? 'bg-red-500/20 border-red-500/50 text-red-400'
-                : 'bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700'
+              muted ? 'bg-red-500/20 border-red-500/50 text-red-400' : 'bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700'
             }`}
             title={muted ? 'Unmute' : 'Mute'}
           >
