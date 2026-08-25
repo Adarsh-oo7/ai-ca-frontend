@@ -98,8 +98,10 @@ class PCMPlayer {
       const samples = resampleLinear(decodePcm16le(b64), srcRate, this.ctx.sampleRate);
       if (!samples.length) return;
 
-      const buf = this.ctx.createBuffer(1, samples.length, this.ctx.sampleRate);
-      buf.copyToChannel(samples, 0);
+      const pcm = new Float32Array(samples.length);
+      pcm.set(samples);
+      const buf = this.ctx.createBuffer(1, pcm.length, this.ctx.sampleRate);
+      buf.copyToChannel(pcm, 0);
 
       const src = this.ctx.createBufferSource();
       src.buffer = buf;
