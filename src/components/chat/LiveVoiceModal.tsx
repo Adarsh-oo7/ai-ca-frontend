@@ -409,6 +409,7 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
           generationConfig: {
             responseModalities: ['AUDIO'],
             speechConfig: {
+              languageCode: config.speechLanguage || 'en-IN',
               voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } },
             },
           },
