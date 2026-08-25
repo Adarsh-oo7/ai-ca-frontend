@@ -10,11 +10,11 @@ const GEMINI_MODEL = 'models/gemini-2.5-flash-native-audio-latest';
 const FALLBACK_MODEL = 'models/gemini-live-2.5-flash-native-audio';
 const VOICE_NAME = 'Aoede';
 const QUIET_THRESHOLD = 0.002;
-const AI_ECHO_GATE = 0.02;
+const BARGE_IN_RMS = 0.09;
 const TARGET_CHUNK_SAMPLES = 640; // 40ms at 16 kHz
 const MAX_RECONNECTS = 4;
 const RECONNECT_BASE_MS = 800;
-const MAX_PLAYBACK_LAG = 0.18;
+const MAX_QUEUED_SECONDS = 2.5;
 
 function getLiveWsUrl(): string {
   const explicit = process.env.NEXT_PUBLIC_WS_URL;
@@ -38,10 +38,42 @@ function getLiveWsUrl(): string {
   return 'wss://api-study.digitalproductsolutions.in/ws/gemini-live/';
 }
 
+function decodePcm16le(b64: string): Float32Array {
+  const raw = atob(b64);
+  const evenLen = raw.length - (raw.length % 2);
+  const f32 = new Float32Array(evenLen / 2);
+  for (let i = 0; i < f32.length; i++) {
+    const lo = raw.charCodeAt(i * 2);
+    const hi = raw.charCodeAt(i * 2 + 1);
+    let sample = (hi << 8) | lo;
+    if (sample >= 0x8000) sample -= 0x10000;
+    f32[i] = sample / 32768;
+  }
+  return f32;
+}
+
+function resampleLinear(input: Float32Array, fromRate: number, toRate: number): Float32Array {
+  if (!input.length || fromRate === toRate) return input;
+  const ratio = fromRate / toRate;
+  const outLen = Math.max(1, Math.floor(input.length / ratio));
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const x = i * ratio;
+    const i0 = Math.min(Math.floor(x), input.length - 1);
+    const i1 = Math.min(i0 + 1, input.length - 1);
+    const f = x - i0;
+    out[i] = input[i0] * (1 - f) + input[i1] * f;
+  }
+  return out;
+}
+
+/** One output stream only — never starts overlapping BufferSources. */
 class PCMPlayer {
   private ctx: AudioContext | null = null;
-  private nextTime = 0;
-  private sources: AudioBufferSourceNode[] = [];
+  private node: ScriptProcessorNode | null = null;
+  private chunks: Float32Array[] = [];
+  private sampleIndex = 0;
+  private queuedSamples = 0;
   public playing = false;
   private onChange?: (p: boolean) => void;
 
@@ -52,48 +84,56 @@ class PCMPlayer {
   init() {
     if (this.ctx) return;
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    this.ctx = new Ctx({ sampleRate: OUT_SAMPLE_RATE });
-    this.nextTime = this.ctx.currentTime;
+    this.ctx = new Ctx();
+    const node = this.ctx.createScriptProcessor(1024, 0, 1);
+    node.onaudioprocess = (e) => {
+      const out = e.outputBuffer.getChannelData(0);
+      let wrote = 0;
+      for (let i = 0; i < out.length; i++) {
+        while (this.chunks.length && this.sampleIndex >= this.chunks[0].length) {
+          this.queuedSamples -= this.chunks[0].length;
+          this.chunks.shift();
+          this.sampleIndex = 0;
+        }
+        if (this.chunks.length) {
+          out[i] = this.chunks[0][this.sampleIndex++];
+          wrote++;
+        } else {
+          out[i] = 0;
+        }
+      }
+      const nowPlaying = wrote > 0 || this.chunks.length > 0;
+      if (nowPlaying !== this.playing) {
+        this.playing = nowPlaying;
+        this.onChange?.(nowPlaying);
+      }
+    };
+    node.connect(this.ctx.destination);
+    this.node = node;
   }
 
-  playChunk(b64: string) {
+  playChunk(b64: string, mimeType?: string) {
     this.init();
     if (!this.ctx) return;
     if (this.ctx.state === 'suspended') this.ctx.resume();
+    if (!b64) return;
 
     try {
-      const raw = atob(b64);
-      const bytes = new Uint8Array(raw.length);
-      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-      const evenLen = bytes.byteLength - (bytes.byteLength % 2);
-      const i16 = new Int16Array(bytes.buffer, bytes.byteOffset, evenLen / 2);
-      const f32 = new Float32Array(i16.length);
-      for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768.0;
+      if (mimeType && !/pcm|audio\/l16/i.test(mimeType) && /json|text/i.test(mimeType)) return;
+      const rateMatch = mimeType?.match(/rate=(\d+)/i);
+      const srcRate = rateMatch ? Number(rateMatch[1]) : OUT_SAMPLE_RATE;
+      const decoded = decodePcm16le(b64);
+      const samples = resampleLinear(decoded, srcRate, this.ctx.sampleRate);
 
-      const buf = this.ctx.createBuffer(1, f32.length, OUT_SAMPLE_RATE);
-      buf.copyToChannel(f32, 0);
-
-      const src = this.ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(this.ctx.destination);
-
-      src.onended = () => {
-        this.sources = this.sources.filter((s) => s !== src);
-        if (this.sources.length === 0) {
-          this.playing = false;
-          this.onChange?.(false);
-        }
-      };
-
-      const now = this.ctx.currentTime;
-      if (this.nextTime < now) this.nextTime = now;
-      if (this.nextTime - now > MAX_PLAYBACK_LAG) {
-        this.nextTime = now;
+      const maxSamples = Math.floor(this.ctx.sampleRate * MAX_QUEUED_SECONDS);
+      if (this.queuedSamples + samples.length > maxSamples) {
+        this.chunks = [];
+        this.sampleIndex = 0;
+        this.queuedSamples = 0;
       }
-      src.start(this.nextTime);
-      this.nextTime += buf.duration;
 
-      this.sources.push(src);
+      this.chunks.push(samples);
+      this.queuedSamples += samples.length;
       if (!this.playing) {
         this.playing = true;
         this.onChange?.(true);
@@ -104,15 +144,9 @@ class PCMPlayer {
   }
 
   stop() {
-    this.sources.forEach((s) => {
-      try {
-        s.stop();
-      } catch {
-        /* already stopped */
-      }
-    });
-    this.sources = [];
-    if (this.ctx) this.nextTime = this.ctx.currentTime;
+    this.chunks = [];
+    this.sampleIndex = 0;
+    this.queuedSamples = 0;
     if (this.playing) {
       this.playing = false;
       this.onChange?.(false);
@@ -121,6 +155,12 @@ class PCMPlayer {
 
   close() {
     this.stop();
+    try {
+      this.node?.disconnect();
+    } catch {
+      /* ignore */
+    }
+    this.node = null;
     try {
       this.ctx?.close();
     } catch {
@@ -248,8 +288,15 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
       pcmBufferRef.current = [];
       pcmSamplesRef.current = 0;
 
-      const gate = playerRef.current?.playing ? AI_ECHO_GATE : QUIET_THRESHOLD;
-      if (rms(merged) < gate) return;
+      const level = rms(merged);
+      if (playerRef.current?.playing) {
+        if (level >= BARGE_IN_RMS) {
+          playerRef.current.stop();
+        } else {
+          return;
+        }
+      }
+      if (level < QUIET_THRESHOLD) return;
       try {
         ws.send(
           JSON.stringify({
@@ -343,6 +390,7 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
     isClosingRef.current = false;
     setupCompleteRef.current = false;
 
+    playerRef.current?.close();
     playerRef.current = new PCMPlayer((playing) => {
       setSpeaking(playing);
       setStatus(playing ? 'Devika is speaking...' : 'Listening...');
@@ -465,8 +513,10 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
 
             if (modelTurn?.parts) {
               for (const part of modelTurn.parts) {
-                if (part.inlineData?.data) {
-                  playerRef.current?.playChunk(part.inlineData.data);
+                const audioData = part.inlineData?.data as string | undefined;
+                const mimeType = (part.inlineData?.mimeType as string | undefined) || '';
+                if (audioData && (!mimeType || /pcm|audio/i.test(mimeType))) {
+                  playerRef.current?.playChunk(audioData, mimeType);
                 }
                 if (part.text) {
                   const chunk = part.text.replace(/\*\*.*?\*\*/g, '').trim();
