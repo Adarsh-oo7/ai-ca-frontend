@@ -10,11 +10,10 @@ const GEMINI_MODEL = 'models/gemini-2.5-flash-native-audio-latest';
 const FALLBACK_MODEL = 'models/gemini-live-2.5-flash-native-audio';
 const VOICE_NAME = 'Aoede';
 const QUIET_THRESHOLD = 0.002;
-const BARGE_IN_RMS = 0.09;
 const TARGET_CHUNK_SAMPLES = 640; // 40ms at 16 kHz
 const MAX_RECONNECTS = 4;
 const RECONNECT_BASE_MS = 800;
-const MAX_QUEUED_SECONDS = 2.5;
+const PLAYBACK_LOOKAHEAD = 0.06;
 
 function getLiveWsUrl(): string {
   const explicit = process.env.NEXT_PUBLIC_WS_URL;
@@ -67,13 +66,11 @@ function resampleLinear(input: Float32Array, fromRate: number, toRate: number): 
   return out;
 }
 
-/** One output stream only — never starts overlapping BufferSources. */
+/** Gapless sequential playback. Never restarts a chunk on top of another. */
 class PCMPlayer {
   private ctx: AudioContext | null = null;
-  private node: ScriptProcessorNode | null = null;
-  private chunks: Float32Array[] = [];
-  private sampleIndex = 0;
-  private queuedSamples = 0;
+  private nextTime = 0;
+  private sources: AudioBufferSourceNode[] = [];
   public playing = false;
   private onChange?: (p: boolean) => void;
 
@@ -85,31 +82,7 @@ class PCMPlayer {
     if (this.ctx) return;
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     this.ctx = new Ctx();
-    const node = this.ctx.createScriptProcessor(1024, 0, 1);
-    node.onaudioprocess = (e) => {
-      const out = e.outputBuffer.getChannelData(0);
-      let wrote = 0;
-      for (let i = 0; i < out.length; i++) {
-        while (this.chunks.length && this.sampleIndex >= this.chunks[0].length) {
-          this.queuedSamples -= this.chunks[0].length;
-          this.chunks.shift();
-          this.sampleIndex = 0;
-        }
-        if (this.chunks.length) {
-          out[i] = this.chunks[0][this.sampleIndex++];
-          wrote++;
-        } else {
-          out[i] = 0;
-        }
-      }
-      const nowPlaying = wrote > 0 || this.chunks.length > 0;
-      if (nowPlaying !== this.playing) {
-        this.playing = nowPlaying;
-        this.onChange?.(nowPlaying);
-      }
-    };
-    node.connect(this.ctx.destination);
-    this.node = node;
+    this.nextTime = this.ctx.currentTime;
   }
 
   playChunk(b64: string, mimeType?: string) {
@@ -122,18 +95,31 @@ class PCMPlayer {
       if (mimeType && !/pcm|audio\/l16/i.test(mimeType) && /json|text/i.test(mimeType)) return;
       const rateMatch = mimeType?.match(/rate=(\d+)/i);
       const srcRate = rateMatch ? Number(rateMatch[1]) : OUT_SAMPLE_RATE;
-      const decoded = decodePcm16le(b64);
-      const samples = resampleLinear(decoded, srcRate, this.ctx.sampleRate);
+      const samples = resampleLinear(decodePcm16le(b64), srcRate, this.ctx.sampleRate);
+      if (!samples.length) return;
 
-      const maxSamples = Math.floor(this.ctx.sampleRate * MAX_QUEUED_SECONDS);
-      if (this.queuedSamples + samples.length > maxSamples) {
-        this.chunks = [];
-        this.sampleIndex = 0;
-        this.queuedSamples = 0;
+      const buf = this.ctx.createBuffer(1, samples.length, this.ctx.sampleRate);
+      buf.copyToChannel(samples, 0);
+
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(this.ctx.destination);
+      src.onended = () => {
+        this.sources = this.sources.filter((s) => s !== src);
+        if (this.sources.length === 0) {
+          this.playing = false;
+          this.onChange?.(false);
+        }
+      };
+
+      const now = this.ctx.currentTime;
+      if (this.nextTime < now + PLAYBACK_LOOKAHEAD) {
+        this.nextTime = now + PLAYBACK_LOOKAHEAD;
       }
+      src.start(this.nextTime);
+      this.nextTime += buf.duration;
 
-      this.chunks.push(samples);
-      this.queuedSamples += samples.length;
+      this.sources.push(src);
       if (!this.playing) {
         this.playing = true;
         this.onChange?.(true);
@@ -144,9 +130,15 @@ class PCMPlayer {
   }
 
   stop() {
-    this.chunks = [];
-    this.sampleIndex = 0;
-    this.queuedSamples = 0;
+    this.sources.forEach((s) => {
+      try {
+        s.stop();
+      } catch {
+        /* already stopped */
+      }
+    });
+    this.sources = [];
+    if (this.ctx) this.nextTime = this.ctx.currentTime;
     if (this.playing) {
       this.playing = false;
       this.onChange?.(false);
@@ -155,12 +147,6 @@ class PCMPlayer {
 
   close() {
     this.stop();
-    try {
-      this.node?.disconnect();
-    } catch {
-      /* ignore */
-    }
-    this.node = null;
     try {
       this.ctx?.close();
     } catch {
@@ -289,13 +275,9 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
       pcmSamplesRef.current = 0;
 
       const level = rms(merged);
-      if (playerRef.current?.playing) {
-        if (level >= BARGE_IN_RMS) {
-          playerRef.current.stop();
-        } else {
-          return;
-        }
-      }
+      // Do not cut playback on speaker echo. While Devika is talking, hold the mic
+      // so Gemini does not interrupt herself. Real barge-in is handled by `interrupted`.
+      if (playerRef.current?.playing) return;
       if (level < QUIET_THRESHOLD) return;
       try {
         ws.send(
