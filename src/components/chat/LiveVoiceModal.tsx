@@ -408,8 +408,10 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
           model: modelRef.current,
           generationConfig: {
             responseModalities: ['AUDIO'],
+            // Native-audio Live models reject languageCode in speechConfig
+            // (Gemini closes the socket right after setup), so language is
+            // steered purely through the system instruction instead.
             speechConfig: {
-              languageCode: config.speechLanguage || 'en-IN',
               voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } },
             },
           },
