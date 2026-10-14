@@ -6,14 +6,18 @@ import { AIService } from '@/services/ai.service';
 
 const MIC_SAMPLE_RATE = 16000;
 const OUT_SAMPLE_RATE = 24000;
-const GEMINI_MODEL = 'models/gemini-2.5-flash-native-audio-latest';
-const FALLBACK_MODEL = 'models/gemini-live-2.5-flash-native-audio';
+const GEMINI_MODEL = 'models/gemini-3.8-live';
+const FALLBACK_MODEL = 'models/gemini-3.1-flash-live-preview';
 const VOICE_NAME = 'Aoede';
-const QUIET_THRESHOLD = 0.002;
 const TARGET_CHUNK_SAMPLES = 640; // 40ms at 16 kHz
-const MAX_RECONNECTS = 4;
-const RECONNECT_BASE_MS = 800;
-const PLAYBACK_LOOKAHEAD = 0.06;
+// While Devika talks, only mic audio louder than this counts as the student
+// barging in; anything quieter is speaker echo and is sent as silence.
+const BARGE_IN_RMS = 0.035;
+const MAX_RECONNECTS = 5;
+const RECONNECT_BASE_MS = 400;
+const PLAYBACK_LOOKAHEAD = 0.08;
+
+type Turn = { sender: 'student' | 'mentor'; text: string };
 
 function getLiveWsUrl(): string {
   const explicit = process.env.NEXT_PUBLIC_WS_URL;
@@ -32,7 +36,6 @@ function getLiveWsUrl(): string {
     if (host === 'localhost' || host === '127.0.0.1') {
       return 'ws://localhost:8765';
     }
-    return 'wss://api-study.digitalproductsolutions.in/ws/gemini-live/';
   }
   return 'wss://api-study.digitalproductsolutions.in/ws/gemini-live/';
 }
@@ -85,14 +88,16 @@ class PCMPlayer {
     this.nextTime = this.ctx.currentTime;
   }
 
+  resume() {
+    if (this.ctx?.state === 'suspended') this.ctx.resume().catch(() => undefined);
+  }
+
   playChunk(b64: string, mimeType?: string) {
     this.init();
-    if (!this.ctx) return;
-    if (this.ctx.state === 'suspended') this.ctx.resume();
-    if (!b64) return;
+    if (!this.ctx || !b64) return;
+    this.resume();
 
     try {
-      if (mimeType && !/pcm|audio\/l16/i.test(mimeType) && /json|text/i.test(mimeType)) return;
       const rateMatch = mimeType?.match(/rate=(\d+)/i);
       const srcRate = rateMatch ? Number(rateMatch[1]) : OUT_SAMPLE_RATE;
       const samples = resampleLinear(decodePcm16le(b64), srcRate, this.ctx.sampleRate);
@@ -108,15 +113,17 @@ class PCMPlayer {
       src.connect(this.ctx.destination);
       src.onended = () => {
         this.sources = this.sources.filter((s) => s !== src);
-        if (this.sources.length === 0) {
+        if (this.sources.length === 0 && this.playing) {
           this.playing = false;
           this.onChange?.(false);
         }
       };
 
       const now = this.ctx.currentTime;
-      if (this.nextTime < now + PLAYBACK_LOOKAHEAD) {
+      if (this.nextTime < now + PLAYBACK_LOOKAHEAD && this.sources.length === 0) {
         this.nextTime = now + PLAYBACK_LOOKAHEAD;
+      } else if (this.nextTime < now) {
+        this.nextTime = now;
       }
       src.start(this.nextTime);
       this.nextTime += buf.duration;
@@ -185,9 +192,35 @@ function fmt(secs: number) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+const LIVE_TOOLS = [
+  {
+    functionDeclarations: [
+      {
+        name: 'search_icai_library',
+        description: 'Search the ICAI study material library for a concept, definition, journal entry, or chapter.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            query: { type: 'STRING' },
+            subject: { type: 'STRING' },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'get_student_study_status',
+        description: 'Get what this student recently studied, revisions due, and strengths/weaknesses.',
+        parameters: { type: 'OBJECT', properties: {} },
+      },
+    ],
+  },
+];
+
+type LiveConfig = Awaited<ReturnType<typeof AIService.getLiveConfig>>;
+
 interface Props {
   isOpen: boolean;
-  onClose: (transcript?: Array<{ sender: 'student' | 'mentor'; text: string }>) => void;
+  onClose: (transcript?: Turn[]) => void;
   sessionId?: string;
 }
 
@@ -204,23 +237,64 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
   const inCtxRef = useRef<AudioContext | null>(null);
   const workletRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const configRef = useRef<LiveConfig | null>(null);
   const mutedRef = useRef(false);
-  const transcriptRef = useRef<Array<{ sender: 'student' | 'mentor'; text: string }>>([]);
-  const currentMentorRef = useRef('');
+  const transcriptRef = useRef<Turn[]>([]);
+  const loggedUpToRef = useRef(0);
+  const studentBufRef = useRef('');
+  const mentorBufRef = useRef('');
   const reconnectCount = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isClosingRef = useRef(false);
   const modelRef = useRef(GEMINI_MODEL);
-  const toolsEnabledRef = useRef(false);
+  const toolsEnabledRef = useRef(true);
   const setupCompleteRef = useRef(false);
+  const resumeHandleRef = useRef<string | null>(null);
+  const greetedRef = useRef(false);
   const pcmBufferRef = useRef<Float32Array[]>([]);
   const pcmSamplesRef = useRef(0);
+  const connectRef = useRef<() => void>(() => undefined);
 
-  mutedRef.current = muted;
+  const commitStudent = useCallback(() => {
+    const text = studentBufRef.current.trim();
+    studentBufRef.current = '';
+    if (text) transcriptRef.current.push({ sender: 'student', text });
+  }, []);
 
-  const tearDownMedia = useCallback(() => {
+  const commitMentor = useCallback(() => {
+    const text = mentorBufRef.current.trim();
+    mentorBufRef.current = '';
+    if (text) transcriptRef.current.push({ sender: 'mentor', text });
+  }, []);
+
+  const flushTranscriptToMemory = useCallback(
+    (final: boolean) => {
+      if (!sessionId) return;
+      const pending = transcriptRef.current.slice(loggedUpToRef.current);
+      if (!pending.length && !final) return;
+      loggedUpToRef.current = transcriptRef.current.length;
+      AIService.logVoiceSession(sessionId, pending, final).catch(console.error);
+    },
+    [sessionId]
+  );
+
+  const closeSocket = useCallback(() => {
+    const ws = wsRef.current;
+    wsRef.current = null;
+    setupCompleteRef.current = false;
+    try {
+      ws?.close(1000, 'cleanup');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const tearDownAll = useCallback(() => {
     timerRef.current && clearInterval(timerRef.current);
     timerRef.current = null;
+    reconnectTimer.current && clearTimeout(reconnectTimer.current);
+    reconnectTimer.current = null;
+    closeSocket();
     try {
       workletRef.current?.disconnect();
     } catch {
@@ -237,36 +311,30 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
     streamRef.current = null;
     playerRef.current?.close();
     playerRef.current = null;
-    const ws = wsRef.current;
-    wsRef.current = null;
-    try {
-      ws?.close(1000, 'cleanup');
-    } catch {
-      /* ignore */
-    }
     setSpeaking(false);
-  }, []);
+  }, [closeSocket]);
 
   const cleanup = useCallback(() => {
     isClosingRef.current = true;
-    reconnectTimer.current && clearTimeout(reconnectTimer.current);
-    reconnectTimer.current = null;
-    tearDownMedia();
-  }, [tearDownMedia]);
+    tearDownAll();
+  }, [tearDownAll]);
 
-  const startMic = useCallback(async (stream: MediaStream, ws: WebSocket) => {
+  const startMic = useCallback(async (stream: MediaStream) => {
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new Ctx({ sampleRate: MIC_SAMPLE_RATE });
+    let ctx: AudioContext;
+    try {
+      ctx = new Ctx({ sampleRate: MIC_SAMPLE_RATE });
+    } catch {
+      ctx = new Ctx();
+    }
     inCtxRef.current = ctx;
+    const inRate = ctx.sampleRate;
     const src = ctx.createMediaStreamSource(stream);
     pcmBufferRef.current = [];
     pcmSamplesRef.current = 0;
 
-    const flush = (force = false) => {
-      if (mutedRef.current || ws.readyState !== WebSocket.OPEN) return;
-      if (!force && pcmSamplesRef.current < TARGET_CHUNK_SAMPLES) return;
-      if (pcmSamplesRef.current === 0) return;
-
+    const flush = () => {
+      if (pcmSamplesRef.current < TARGET_CHUNK_SAMPLES) return;
       const merged = new Float32Array(pcmSamplesRef.current);
       let offset = 0;
       for (const part of pcmBufferRef.current) {
@@ -276,16 +344,17 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
       pcmBufferRef.current = [];
       pcmSamplesRef.current = 0;
 
-      const level = rms(merged);
-      // Do not cut playback on speaker echo. While Devika is talking, hold the mic
-      // so Gemini does not interrupt herself. Real barge-in is handled by `interrupted`.
-      if (playerRef.current?.playing) return;
-      if (level < QUIET_THRESHOLD) return;
+      const ws = wsRef.current;
+      if (mutedRef.current || !ws || ws.readyState !== WebSocket.OPEN || !setupCompleteRef.current) return;
+
+      // Gemini's voice detection needs a continuous stream (including silence)
+      // to notice quickly that the student stopped talking.
+      const out = playerRef.current?.playing && rms(merged) < BARGE_IN_RMS ? new Float32Array(merged.length) : merged;
       try {
         ws.send(
           JSON.stringify({
             realtimeInput: {
-              audio: { mimeType: `audio/pcm;rate=${MIC_SAMPLE_RATE}`, data: f32ToB64(merged) },
+              audio: { mimeType: `audio/pcm;rate=${MIC_SAMPLE_RATE}`, data: f32ToB64(out) },
             },
           })
         );
@@ -294,11 +363,11 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
       }
     };
 
-    const sendPCM = (buf: Float32Array) => {
-      const copy = new Float32Array(buf);
+    const pushPCM = (buf: Float32Array) => {
+      const copy = inRate === MIC_SAMPLE_RATE ? new Float32Array(buf) : resampleLinear(buf, inRate, MIC_SAMPLE_RATE);
       pcmBufferRef.current.push(copy);
       pcmSamplesRef.current += copy.length;
-      flush(false);
+      flush();
     };
 
     if (ctx.audioWorklet) {
@@ -311,7 +380,7 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
 
         const node = new AudioWorkletNode(ctx, 'p');
         workletRef.current = node;
-        node.port.onmessage = (e: MessageEvent<Float32Array>) => sendPCM(e.data);
+        node.port.onmessage = (e: MessageEvent<Float32Array>) => pushPCM(e.data);
 
         src.connect(node);
         const g = ctx.createGain();
@@ -331,48 +400,236 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
     g.gain.value = 0;
     sp.connect(g);
     g.connect(ctx.destination);
-    sp.onaudioprocess = (e: AudioProcessingEvent) => sendPCM(e.inputBuffer.getChannelData(0));
+    sp.onaudioprocess = (e: AudioProcessingEvent) => pushPCM(e.inputBuffer.getChannelData(0));
   }, []);
 
-  const handleToolCalls = useCallback(async (ws: WebSocket, toolCall: { functionCalls?: Array<{ id?: string; name?: string; args?: Record<string, unknown> }> }) => {
-    const calls = toolCall?.functionCalls || [];
-    if (!calls.length || ws.readyState !== WebSocket.OPEN) return;
-    setStatus('Looking up your ICAI notes...');
-    const functionResponses = [];
-    for (const call of calls) {
-      const name = call.name || '';
+  const handleToolCalls = useCallback(
+    async (ws: WebSocket, toolCall: { functionCalls?: Array<{ id?: string; name?: string; args?: Record<string, unknown> }> }) => {
+      const calls = toolCall?.functionCalls || [];
+      if (!calls.length) return;
+      setStatus('Checking your ICAI notes...');
+      const functionResponses = await Promise.all(
+        calls.map(async (call) => {
+          const name = call.name || '';
+          try {
+            const result = await AIService.runLiveTool(name, call.args || {});
+            return { id: call.id, name, response: result };
+          } catch {
+            return { id: call.id, name, response: { error: 'tool failed' } };
+          }
+        })
+      );
+      if (ws.readyState !== WebSocket.OPEN) return;
       try {
-        const result = await AIService.runLiveTool(name, call.args || {});
-        functionResponses.push({
-          id: call.id,
-          name,
-          response: result,
-        });
+        ws.send(JSON.stringify({ toolResponse: { functionResponses } }));
       } catch {
-        functionResponses.push({
-          id: call.id,
-          name,
-          response: { error: 'tool failed' },
-        });
+        /* ignore */
       }
+    },
+    []
+  );
+
+  const scheduleReconnect = useCallback((immediate = false) => {
+    if (isClosingRef.current) return;
+    if (reconnectCount.current >= MAX_RECONNECTS) {
+      setStatus('Could not stay connected. End the call and try again.');
+      return;
     }
-    try {
-      ws.send(JSON.stringify({ toolResponse: { functionResponses } }));
-    } catch {
-      /* ignore */
-    }
+    reconnectCount.current += 1;
+    const delay = immediate ? 0 : RECONNECT_BASE_MS * Math.pow(2, reconnectCount.current - 1);
+    setStatus(immediate ? 'Refreshing connection...' : `Reconnecting (${reconnectCount.current}/${MAX_RECONNECTS})...`);
+    reconnectTimer.current && clearTimeout(reconnectTimer.current);
+    reconnectTimer.current = setTimeout(() => {
+      if (!isClosingRef.current) connectRef.current();
+    }, delay);
   }, []);
 
-  const connect = useCallback(async () => {
+  const openSocket = useCallback(() => {
+    const config = configRef.current;
+    const stream = streamRef.current;
+    if (!config || !stream) return;
+
+    setupCompleteRef.current = false;
+    const ws = new WebSocket(getLiveWsUrl());
+    wsRef.current = ws;
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      if (ws !== wsRef.current) return;
+      setStatus(greetedRef.current ? 'Reconnecting...' : 'Setting up Devika...');
+      const setup: Record<string, unknown> = {
+        model: modelRef.current,
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          // languageCode is rejected by the Live audio models; language is
+          // steered through the system instruction instead.
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } },
+          },
+        },
+        systemInstruction: { parts: [{ text: config.systemInstruction }] },
+        inputAudioTranscription: {},
+        outputAudioTranscription: {},
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
+            endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
+            prefixPaddingMs: 20,
+            silenceDurationMs: 600,
+          },
+        },
+        sessionResumption: resumeHandleRef.current ? { handle: resumeHandleRef.current } : {},
+        contextWindowCompression: { slidingWindow: {} },
+      };
+      if (toolsEnabledRef.current) setup.tools = LIVE_TOOLS;
+      ws.send(JSON.stringify({ setup }));
+    };
+
+    ws.onmessage = async (event: MessageEvent) => {
+      if (ws !== wsRef.current) return;
+      let msg;
+      try {
+        let raw = '';
+        if (typeof event.data === 'string') raw = event.data;
+        else if (event.data instanceof ArrayBuffer) raw = new TextDecoder().decode(event.data);
+        else if (event.data instanceof Blob) raw = await event.data.text();
+        msg = JSON.parse(raw);
+      } catch (err) {
+        console.error('Live message parse error:', err);
+        return;
+      }
+
+      if (msg.setupComplete !== undefined) {
+        setupCompleteRef.current = true;
+        reconnectCount.current = 0;
+        if (!workletRef.current) await startMic(stream);
+        if (!timerRef.current) timerRef.current = setInterval(() => setTimer((t) => t + 1), 1000);
+        if (!greetedRef.current) {
+          greetedRef.current = true;
+          try {
+            ws.send(JSON.stringify({ realtimeInput: { text: 'Hi' } }));
+          } catch {
+            /* ignore */
+          }
+        }
+        setStatus(playerRef.current?.playing ? 'Devika is speaking...' : 'Listening...');
+        return;
+      }
+
+      if (msg.sessionResumptionUpdate) {
+        const { newHandle, resumable } = msg.sessionResumptionUpdate;
+        if (resumable !== false && newHandle) resumeHandleRef.current = newHandle;
+      }
+
+      if (msg.goAway) {
+        // Gemini is about to end this socket; hop to a fresh one that resumes the same conversation.
+        closeSocket();
+        scheduleReconnect(true);
+        return;
+      }
+
+      if (msg.toolCall) {
+        await handleToolCalls(ws, msg.toolCall);
+        return;
+      }
+
+      const sc = msg.serverContent;
+      if (!sc) return;
+
+      const inText: string | undefined = sc.inputTranscription?.text;
+      if (inText) {
+        studentBufRef.current += inText;
+        setLastLine(`You: ${studentBufRef.current.trim()}`);
+      }
+
+      if (sc.interrupted) {
+        playerRef.current?.stop();
+        commitMentor();
+        setStatus('Listening...');
+      }
+
+      if (sc.modelTurn?.parts) {
+        for (const part of sc.modelTurn.parts) {
+          const audioData = part.inlineData?.data as string | undefined;
+          const mimeType = (part.inlineData?.mimeType as string | undefined) || '';
+          if (audioData && (!mimeType || /pcm|audio/i.test(mimeType))) {
+            if (studentBufRef.current) commitStudent();
+            playerRef.current?.playChunk(audioData, mimeType);
+          }
+        }
+      }
+
+      const outText: string | undefined = sc.outputTranscription?.text;
+      if (outText) {
+        if (studentBufRef.current) commitStudent();
+        mentorBufRef.current += outText;
+        setLastLine(mentorBufRef.current.trim());
+      }
+
+      if (sc.turnComplete) {
+        commitStudent();
+        commitMentor();
+        flushTranscriptToMemory(false);
+        if (!playerRef.current?.playing) setStatus('Listening...');
+      }
+    };
+
+    ws.onerror = (e) => {
+      console.error('Gemini Live WS error:', e);
+    };
+
+    ws.onclose = (e) => {
+      if (ws !== wsRef.current) return;
+      wsRef.current = null;
+      const wasSetUp = setupCompleteRef.current;
+      setupCompleteRef.current = false;
+      if (isClosingRef.current) {
+        setStatus('Call ended.');
+        return;
+      }
+      if (e.reason) console.warn('Live socket closed:', e.code, e.reason);
+
+      if (!wasSetUp) {
+        // Setup was rejected: a stale resume handle, tools, or the model itself.
+        if (resumeHandleRef.current) {
+          resumeHandleRef.current = null;
+        } else if (toolsEnabledRef.current) {
+          toolsEnabledRef.current = false;
+        } else if (modelRef.current === GEMINI_MODEL) {
+          modelRef.current = FALLBACK_MODEL;
+        }
+      }
+      scheduleReconnect(false);
+    };
+  }, [startMic, handleToolCalls, closeSocket, scheduleReconnect, commitStudent, commitMentor, flushTranscriptToMemory]);
+
+  useEffect(() => {
+    connectRef.current = openSocket;
+  }, [openSocket]);
+
+  const toggleMute = useCallback(() => {
+    setMuted((m) => {
+      mutedRef.current = !m;
+      return !m;
+    });
+  }, []);
+
+  const startCall = useCallback(async () => {
     setStatus('Connecting to Devika...');
     setTimer(0);
     setLastLine('');
-    if (reconnectCount.current === 0) {
-      transcriptRef.current = [];
-    }
-    currentMentorRef.current = '';
+    transcriptRef.current = [];
+    loggedUpToRef.current = 0;
+    studentBufRef.current = '';
+    mentorBufRef.current = '';
+    reconnectCount.current = 0;
+    resumeHandleRef.current = null;
+    greetedRef.current = false;
+    modelRef.current = GEMINI_MODEL;
+    toolsEnabledRef.current = true;
     isClosingRef.current = false;
-    setupCompleteRef.current = false;
+    mutedRef.current = false;
+    setMuted(false);
 
     playerRef.current?.close();
     playerRef.current = new PCMPlayer((playing) => {
@@ -380,6 +637,7 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
       setStatus(playing ? 'Devika is speaking...' : 'Listening...');
     });
     playerRef.current.init();
+    playerRef.current.resume();
 
     try {
       const [config, stream] = await Promise.all([
@@ -387,213 +645,34 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
         navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
-            sampleRate: MIC_SAMPLE_RATE,
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
           },
         }),
       ]);
+      if (isClosingRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       if (!config.systemInstruction) throw new Error('Live mentor config missing');
+      configRef.current = config;
       streamRef.current = stream;
-
-      const wsUrl = getLiveWsUrl();
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-      ws.binaryType = 'arraybuffer';
-
-      ws.onopen = () => {
-        setStatus('Setting up Devika...');
-        const setup: Record<string, unknown> = {
-          model: modelRef.current,
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            // Native-audio Live models reject languageCode in speechConfig
-            // (Gemini closes the socket right after setup), so language is
-            // steered purely through the system instruction instead.
-            speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE_NAME } },
-            },
-          },
-          systemInstruction: {
-            parts: [{ text: config.systemInstruction }],
-          },
-          inputAudioTranscription: {},
-          outputAudioTranscription: {},
-          contextWindowCompression: { slidingWindow: {} },
-        };
-        if (toolsEnabledRef.current) {
-          setup.tools = [
-            {
-              functionDeclarations: [
-                {
-                  name: 'search_icai_library',
-                  description: 'Search ICAI study material for a concept or chapter.',
-                  parameters: {
-                    type: 'OBJECT',
-                    properties: {
-                      query: { type: 'STRING' },
-                      subject: { type: 'STRING' },
-                    },
-                    required: ['query'],
-                  },
-                },
-                {
-                  name: 'get_student_study_status',
-                  description: 'Get what this student recently studied and revisions due.',
-                  parameters: { type: 'OBJECT', properties: {} },
-                },
-              ],
-            },
-          ];
-        }
-        ws.send(JSON.stringify({ setup }));
-      };
-
-      ws.onmessage = async (event: MessageEvent) => {
-        if (ws !== wsRef.current) return;
-        try {
-          let raw = '';
-          if (typeof event.data === 'string') {
-            raw = event.data;
-          } else if (event.data instanceof ArrayBuffer) {
-            raw = new TextDecoder().decode(event.data);
-          } else if (event.data instanceof Blob) {
-            raw = await event.data.text();
-          }
-
-          const msg = JSON.parse(raw);
-
-          if (msg.setupComplete !== undefined) {
-            setupCompleteRef.current = true;
-            await startMic(stream, ws);
-            reconnectCount.current = 0;
-            timerRef.current && clearInterval(timerRef.current);
-            timerRef.current = setInterval(() => setTimer((t) => t + 1), 1000);
-            try {
-              ws.send(JSON.stringify({ realtimeInput: { text: 'Hi' } }));
-            } catch {
-              /* ignore */
-            }
-            setStatus('Listening...');
-            return;
-          }
-
-          if (msg.toolCall) {
-            await handleToolCalls(ws, msg.toolCall);
-          }
-
-          if (msg.goAway) {
-            setStatus('Session wrapping up. Reconnecting...');
-            return;
-          }
-
-          if (msg.serverContent) {
-            const { modelTurn, turnComplete, interrupted } = msg.serverContent;
-
-            if (interrupted) {
-              playerRef.current?.stop();
-              currentMentorRef.current = '';
-              setStatus('Listening...');
-              return;
-            }
-
-            if (modelTurn?.parts) {
-              for (const part of modelTurn.parts) {
-                const audioData = part.inlineData?.data as string | undefined;
-                const mimeType = (part.inlineData?.mimeType as string | undefined) || '';
-                if (audioData && (!mimeType || /pcm|audio/i.test(mimeType))) {
-                  playerRef.current?.playChunk(audioData, mimeType);
-                }
-                if (part.text) {
-                  const chunk = part.text.replace(/\*\*.*?\*\*/g, '').trim();
-                  if (chunk) {
-                    currentMentorRef.current += (currentMentorRef.current ? ' ' : '') + chunk;
-                    setLastLine(currentMentorRef.current);
-                  }
-                }
-              }
-            }
-
-            if (turnComplete) {
-              if (currentMentorRef.current) {
-                transcriptRef.current.push({ sender: 'mentor', text: currentMentorRef.current });
-                currentMentorRef.current = '';
-              }
-              setStatus('Listening...');
-            }
-          }
-
-          if (msg.outputTranscription?.text) {
-            const t = msg.outputTranscription.text.trim();
-            if (t) {
-              currentMentorRef.current += (currentMentorRef.current ? ' ' : '') + t;
-              setLastLine(currentMentorRef.current);
-            }
-          }
-
-          if (msg.inputTranscription?.text) {
-            const studentText = msg.inputTranscription.text.trim();
-            if (studentText) {
-              transcriptRef.current.push({ sender: 'student', text: studentText });
-              setLastLine(`You: ${studentText}`);
-            }
-          }
-        } catch (err) {
-          console.error('WS message error:', err);
-        }
-      };
-
-      ws.onerror = (e) => {
-        console.error('Gemini Live WS error:', e);
-        setStatus('Connection error. Retrying...');
-      };
-
-      ws.onclose = (e) => {
-        if (ws !== wsRef.current) return;
-        if (isClosingRef.current || e.code === 1000) {
-          setStatus('Call ended.');
-          return;
-        }
-
-        if (reconnectCount.current === 0 && modelRef.current === GEMINI_MODEL) {
-          modelRef.current = FALLBACK_MODEL;
-        }
-        if (!setupCompleteRef.current && toolsEnabledRef.current) {
-          toolsEnabledRef.current = false;
-        }
-
-        if (reconnectCount.current < MAX_RECONNECTS) {
-          reconnectCount.current += 1;
-          const delay = RECONNECT_BASE_MS * Math.pow(2, reconnectCount.current - 1);
-          setStatus(`Connection lost. Reconnecting (${reconnectCount.current}/${MAX_RECONNECTS})...`);
-          reconnectTimer.current = setTimeout(() => {
-            if (!isClosingRef.current) {
-              tearDownMedia();
-              connect();
-            }
-          }, delay);
-        } else {
-          setStatus('Could not stay connected. End the call and try again.');
-        }
-      };
+      openSocket();
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Could not connect.';
       console.error('Failed to start Live Call:', err);
-      if (message.toLowerCase().includes('permission') || message.toLowerCase().includes('denied')) {
+      if (/permission|denied|notallowed/i.test(message)) {
         setStatus('Microphone permission is required for Live Talk.');
       } else {
         setStatus(`Error: ${message}`);
       }
     }
-  }, [sessionId, startMic, handleToolCalls, tearDownMedia]);
+  }, [sessionId, openSocket]);
 
   useEffect(() => {
     if (isOpen) {
-      reconnectCount.current = 0;
-      modelRef.current = GEMINI_MODEL;
-      toolsEnabledRef.current = false;
-      connect();
+      startCall();
     } else {
       cleanup();
     }
@@ -602,14 +681,13 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
   }, [isOpen]);
 
   const handleEnd = useCallback(() => {
+    commitStudent();
+    commitMentor();
+    flushTranscriptToMemory(true);
     const final = [...transcriptRef.current];
-    reconnectCount.current = 0;
-    if (sessionId && final.length > 0) {
-      AIService.logVoiceSession(sessionId, final).catch(console.error);
-    }
     cleanup();
     onClose(final);
-  }, [sessionId, cleanup, onClose]);
+  }, [cleanup, onClose, commitStudent, commitMentor, flushTranscriptToMemory]);
 
   if (!isOpen) return null;
 
@@ -664,7 +742,7 @@ export default function LiveVoiceModal({ isOpen, onClose, sessionId }: Props) {
 
         <div className="relative z-10 w-full flex items-center justify-center gap-6 pt-4 border-t border-zinc-800">
           <button
-            onClick={() => setMuted((m) => !m)}
+            onClick={toggleMute}
             className={`p-4 rounded-full border transition-colors ${
               muted ? 'bg-red-500/20 border-red-500/50 text-red-400' : 'bg-zinc-800 border-zinc-700 text-zinc-200 hover:bg-zinc-700'
             }`}

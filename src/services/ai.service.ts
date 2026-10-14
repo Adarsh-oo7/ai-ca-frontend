@@ -65,11 +65,16 @@ export const AIService = {
     return response.data;
   },
 
-  async logVoiceSession(sessionId: string, turns: Array<{ sender: 'student' | 'mentor'; text: string }>) {
-    if (!sessionId || !turns || turns.length === 0) return;
+  async logVoiceSession(
+    sessionId: string,
+    turns: Array<{ sender: 'student' | 'mentor'; text: string }>,
+    final = false
+  ) {
+    if (!sessionId || (!final && (!turns || turns.length === 0))) return;
     const response = await api.post('/api/ai/chat/log_voice_turn/', {
       session_id: sessionId,
-      turns,
+      turns: turns || [],
+      final,
     });
     return response.data;
   },
